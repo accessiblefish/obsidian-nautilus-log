@@ -4,7 +4,7 @@ import {
   MarkdownRenderChild,
   Plugin,
   PluginSettingTab,
-  Setting,
+  SettingDefinitionItem,
   TFile,
   moment,
   setIcon,
@@ -654,190 +654,159 @@ class NautilusSettingTab extends PluginSettingTab {
     super(app, plugin);
   }
 
-  display(): void {
-    const { containerEl } = this;
-    containerEl.empty();
-    new Setting(containerEl).setName("Nautilus Log").setHeading();
+  getControlValue(key: string): unknown {
+    const s = this.plugin.settings as unknown as Record<string, unknown>;
+    if (key === "workdayStart" || key === "workdayEnd") return String(s[key]);
+    return s[key];
+  }
 
-    new Setting(containerEl)
-      .setName("Workday start")
-      .setDesc("The spiral plans flexible tasks starting from this hour.")
-      .addDropdown((d) => {
-        for (let h = 0; h <= 23; h++) {
-          d.addOption(String(h * 60), `${h}:00`);
-        }
-        d.setValue(String(this.plugin.settings.workdayStart)).onChange(
-          async (v) => {
-            this.plugin.settings.workdayStart = parseInt(v, 10);
-            await this.plugin.saveSettings();
-          }
-        );
-      });
+  async setControlValue(key: string, value: unknown): Promise<void> {
+    const s = this.plugin.settings as unknown as Record<string, unknown>;
+    s[key] =
+      (key === "workdayStart" || key === "workdayEnd") &&
+      typeof value === "string"
+        ? parseInt(value, 10)
+        : value;
+    await this.plugin.saveSettings();
+    // re-evaluate visible() predicates (execution layer sub-settings)
+    this.update();
+  }
 
-    new Setting(containerEl)
-      .setName("Workday end")
-      .setDesc(
-        "The last hour of the plan. An end at or before the start continues past midnight into the next day."
-      )
-      .addDropdown((d) => {
-        for (let h = 1; h <= 24; h++) {
-          d.addOption(String(h * 60), h === 24 ? "24:00" : `${h}:00`);
-        }
-        d.setValue(String(this.plugin.settings.workdayEnd)).onChange(
-          async (v) => {
-            this.plugin.settings.workdayEnd = parseInt(v, 10);
-            await this.plugin.saveSettings();
-          }
-        );
-      });
-
-    new Setting(containerEl)
-      .setName("Default task duration")
-      .setDesc("Minutes assigned to flexible tasks without an explicit duration (5–60).")
-      .addSlider((s) =>
-        s
-          .setLimits(5, 60, 5)
-          .setValue(this.plugin.settings.defaultDuration)
-          .onChange(async (v) => {
-            this.plugin.settings.defaultDuration = v;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Legend length limit")
-      .setDesc("Maximum characters shown for each label on the spiral (15–30).")
-      .addSlider((s) =>
-        s
-          .setLimits(15, 30, 1)
-          .setValue(this.plugin.settings.legendLenLimit)
-          .onChange(async (v) => {
-            this.plugin.settings.legendLenLimit = v;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Show playback button")
-      .setDesc("Show the hyper-lapse play button that replays the whole day.")
-      .addToggle((t) =>
-        t.setValue(this.plugin.settings.showPlaybackButton).onChange(async (v) => {
-          this.plugin.settings.showPlaybackButton = v;
-          await this.plugin.saveSettings();
-        })
-      );
-
-    new Setting(containerEl)
-      .setName("Daily note date format")
-      .setDesc(
-        "moment.js format matching your daily note filenames (e.g. YYYY-MM-DD). Charts in daily notes plan from the current time; other notes plan from the workday start."
-      )
-      .addText((t) =>
-        t
-          .setPlaceholder("YYYY-MM-DD")
-          .setValue(this.plugin.settings.dailyNoteFormat)
-          .onChange(async (v) => {
-            this.plugin.settings.dailyNoteFormat = v.trim();
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Stamp completion time")
-      .setDesc(
-        "When you check off a task, append a dHH:MM timestamp so it stays visible on the spiral where it was completed."
-      )
-      .addToggle((t) =>
-        t.setValue(this.plugin.settings.stampOnCheck).onChange(async (v) => {
-          this.plugin.settings.stampOnCheck = v;
-          await this.plugin.saveSettings();
-        })
-      );
-
-    new Setting(containerEl)
-      .setName("Execution layer")
-      .setDesc(
-        "Enable CLOCK tracking (org-compatible LOGBOOK entries), a standalone POMO, and the Planned vs Actual daily review. Default off."
-      )
-      .addToggle((t) =>
-        t.setValue(this.plugin.settings.executionLayer).onChange(async (v) => {
-          this.plugin.settings.executionLayer = v;
-          await this.plugin.saveSettings();
-          this.display();
-        })
-      );
-
-    if (this.plugin.settings.executionLayer) {
-      new Setting(containerEl)
-        .setName("Pomodoro threshold")
-        .setDesc("Minutes before the POMO signal turns red (0–120).")
-        .addSlider((s) =>
-          s
-            .setLimits(0, 120, 5)
-            .setValue(this.plugin.settings.pomodoroThreshold)
-            .onChange(async (v) => {
-              this.plugin.settings.pomodoroThreshold = v;
-              await this.plugin.saveSettings();
-            })
-        );
-
-      new Setting(containerEl)
-        .setName("Recent retention")
-        .setDesc(
-          "Minutes a finished CLOCK stays in the Timing recents list. 0 disables."
-        )
-        .addSlider((s) =>
-          s
-            .setLimits(0, 120, 5)
-            .setValue(this.plugin.settings.recentRetention)
-            .onChange(async (v) => {
-              this.plugin.settings.recentRetention = v;
-              await this.plugin.saveSettings();
-            })
-        );
-
-      new Setting(containerEl)
-        .setName("Forgotten timer warning")
-        .setDesc(
-          "Warn when a CLOCK runs longer than this many minutes. Never stops the CLOCK. 0 disables."
-        )
-        .addSlider((s) =>
-          s
-            .setLimits(0, 240, 10)
-            .setValue(this.plugin.settings.forgottenTimerWarning)
-            .onChange(async (v) => {
-              this.plugin.settings.forgottenTimerWarning = v;
-              await this.plugin.saveSettings();
-            })
-        );
-    }
-
-    new Setting(containerEl)
-      .setName("Highlight tag")
-      .setDesc(
-        "Tasks containing this tag are drawn with the custom color below (e.g. #focus). Empty disables."
-      )
-      .addText((t) =>
-        t
-          .setPlaceholder("#focus")
-          .setValue(this.plugin.settings.customColorTag)
-          .onChange(async (v) => {
-            this.plugin.settings.customColorTag = v.trim();
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Highlight color")
-      .setDesc("rgba(...) color for tasks carrying the highlight tag.")
-      .addText((t) =>
-        t
-          .setPlaceholder("rgba(255,0,0,0.5)")
-          .setValue(this.plugin.settings.customColor)
-          .onChange(async (v) => {
-            this.plugin.settings.customColor = v.trim();
-            await this.plugin.saveSettings();
-          })
-      );
+  getSettingDefinitions(): SettingDefinitionItem[] {
+    const execVisible = () => this.plugin.settings.executionLayer;
+    const hourOptions = (from: number, to: number): Record<string, string> => {
+      const o: Record<string, string> = {};
+      for (let h = from; h <= to; h++) {
+        o[String(h * 60)] = h === 24 ? "24:00" : `${h}:00`;
+      }
+      return o;
+    };
+    return [
+      {
+        name: "Workday start",
+        desc: "The spiral plans flexible tasks starting from this hour.",
+        control: {
+          type: "dropdown",
+          key: "workdayStart",
+          options: hourOptions(0, 23),
+        },
+      },
+      {
+        name: "Workday end",
+        desc: "The last hour of the plan. An end at or before the start continues past midnight into the next day.",
+        control: {
+          type: "dropdown",
+          key: "workdayEnd",
+          options: hourOptions(1, 24),
+        },
+      },
+      {
+        name: "Default task duration",
+        desc: "Minutes assigned to flexible tasks without an explicit duration (5-60).",
+        control: {
+          type: "slider",
+          key: "defaultDuration",
+          min: 5,
+          max: 60,
+          step: 5,
+          displayFormat: (v) => `${v} min`,
+        },
+      },
+      {
+        name: "Legend length limit",
+        desc: "Maximum characters shown for each label on the spiral (15-30).",
+        control: {
+          type: "slider",
+          key: "legendLenLimit",
+          min: 15,
+          max: 30,
+          step: 1,
+          displayFormat: (v) => String(v),
+        },
+      },
+      {
+        name: "Show playback button",
+        desc: "Show the hyper-lapse play button that replays the whole day.",
+        control: { type: "toggle", key: "showPlaybackButton" },
+      },
+      {
+        name: "Daily note date format",
+        desc: "moment.js format matching your daily note filenames (e.g. YYYY-MM-DD). Charts in daily notes plan from the current time; other notes plan from the workday start.",
+        control: {
+          type: "text",
+          key: "dailyNoteFormat",
+          placeholder: "YYYY-MM-DD",
+        },
+      },
+      {
+        name: "Stamp completion time",
+        desc: "When you check off a task, append a dHH:MM timestamp so it stays visible on the spiral where it was completed.",
+        control: { type: "toggle", key: "stampOnCheck" },
+      },
+      {
+        name: "Highlight tag",
+        desc: "Tasks containing this tag are drawn with the custom color below (e.g. #focus). Empty disables.",
+        control: { type: "text", key: "customColorTag", placeholder: "#focus" },
+      },
+      {
+        name: "Highlight color",
+        desc: "rgba(...) color for tasks carrying the highlight tag.",
+        control: {
+          type: "text",
+          key: "customColor",
+          placeholder: "rgba(255,0,0,0.5)",
+        },
+      },
+      {
+        type: "group",
+        heading: "Execution layer",
+        items: [
+          {
+            name: "Execution layer",
+            desc: "Enable CLOCK tracking (org-compatible LOGBOOK entries), a standalone POMO, and the Planned vs Actual daily review. Default off.",
+            control: { type: "toggle", key: "executionLayer" },
+          },
+          {
+            name: "Pomodoro threshold",
+            desc: "Minutes before the POMO signal turns red (0-120).",
+            visible: execVisible,
+            control: {
+              type: "slider",
+              key: "pomodoroThreshold",
+              min: 0,
+              max: 120,
+              step: 5,
+              displayFormat: (v) => `${v} min`,
+            },
+          },
+          {
+            name: "Recent retention",
+            desc: "Minutes a finished CLOCK stays in the Timing recents list. 0 disables.",
+            visible: execVisible,
+            control: {
+              type: "slider",
+              key: "recentRetention",
+              min: 0,
+              max: 120,
+              step: 5,
+              displayFormat: (v) => `${v} min`,
+            },
+          },
+          {
+            name: "Forgotten timer warning",
+            desc: "Warn when a CLOCK runs longer than this many minutes. Never stops the CLOCK. 0 disables.",
+            visible: execVisible,
+            control: {
+              type: "slider",
+              key: "forgottenTimerWarning",
+              min: 0,
+              max: 240,
+              step: 10,
+              displayFormat: (v) => `${v} min`,
+            },
+          },
+        ],
+      },
+    ];
   }
 }
