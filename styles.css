@@ -71,6 +71,14 @@
   transition: opacity 0.3s ease;
 }
 
+.nautilus-now-pointer {
+  filter: drop-shadow(0px 0px 4px rgba(233, 79, 79, 0.4));
+}
+
+.nautilus-clickable {
+  cursor: pointer;
+}
+
 .nautilus-container:hover .nautilus-controls-top {
   opacity: 1;
 }
@@ -218,8 +226,8 @@
   font-size: 9px;
 }
 
-.nautilus-exec-warn {
-  color: #ea0f0f !important;
+.nautilus-exec .nautilus-exec-elapsed.nautilus-exec-warn {
+  color: #ea0f0f;
 }
 
 .nautilus-exec-btn {

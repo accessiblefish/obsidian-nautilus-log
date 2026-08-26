@@ -29,14 +29,12 @@ export interface PanelProps {
 }
 
 function el(
-  tag: string,
+  tag: keyof HTMLElementTagNameMap,
   cls: string | null,
   text?: string,
   parent?: HTMLElement
 ): HTMLElement {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text !== undefined) e.textContent = text;
+  const e = createEl(tag, { cls: cls ?? undefined, text });
   if (parent) parent.appendChild(e);
   return e;
 }

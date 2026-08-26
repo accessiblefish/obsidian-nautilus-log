@@ -176,7 +176,7 @@ function renderSlice(
     playbackDelay(o.taskStartMin, settings.workdayStart, settings.workdayEnd)
   );
   if (o.clickToProgress && o.onClick) {
-    path.style.cursor = "pointer";
+    path.classList.add("nautilus-clickable");
     path.addEventListener("click", o.onClick);
   }
   g.appendChild(path);
@@ -245,7 +245,7 @@ function renderSlice(
       [txt(o.text.substring(0, settings.legendLenLimit))]
     );
     if (o.clickToProgress && o.onClick) {
-      t.style.cursor = "pointer";
+      t.classList.add("nautilus-clickable");
       t.addEventListener("click", o.onClick);
     }
     group.appendChild(t);
@@ -546,7 +546,6 @@ function renderNowPointer(ctx: Ctx): SVGLineElement {
     "stroke-width": 2,
     "stroke-linecap": "round",
   });
-  line.style.filter = "drop-shadow(0px 0px 4px rgba(233, 79, 79, 0.4))";
   setPointerPosition(line, ctx.p.nowMin, ctx);
   return line;
 }

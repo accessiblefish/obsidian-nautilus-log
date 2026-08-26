@@ -7,12 +7,12 @@ import {
   Setting,
   TFile,
   moment,
+  setIcon,
 } from "obsidian";
 import { DEFAULT_SETTINGS, NautEvent, NautilusSettings, workdayWindow } from "./types";
 import {
   bumpProgressInLine,
   fixTaskLines,
-  minutesToTime,
   parseRowParams,
   TaskLine,
 } from "./parser";
@@ -35,9 +35,10 @@ import { buildNautilusSvg } from "./render";
 const LIST_RE = /^\s*(?:[-*+]|\d+\.)\s+/;
 const CHECK_RE = /^\s*[-*+]\s+\[([ xX])\]\s+/;
 
-const EYE_SVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
-const EYE_OFF_SVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`;
-const PLAY_SVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>`;
+/** Persisted data.json shape: settings plus ephemeral POMO state. */
+interface PersistedData extends Partial<NautilusSettings> {
+  pomoStartMs?: number | null;
+}
 
 function nowMinutes(): number {
   const d = new Date();
@@ -183,7 +184,7 @@ class NautilusBlock extends MarkdownRenderChild {
 
   onunload(): void {
     this.plugin.blocks.delete(this);
-    if (this.rafId !== null) cancelAnimationFrame(this.rafId);
+    if (this.rafId !== null) window.cancelAnimationFrame(this.rafId);
   }
 
   async refresh(): Promise<void> {
@@ -374,7 +375,7 @@ class NautilusBlock extends MarkdownRenderChild {
         title: this.state.showDone ? "Hide completed" : "Show completed",
       },
     });
-    eyeBtn.innerHTML = this.state.showDone ? EYE_SVG : EYE_OFF_SVG;
+    setIcon(eyeBtn, this.state.showDone ? "eye" : "eye-off");
     eyeBtn.addEventListener("click", () => {
       this.state.showDone = !this.state.showDone;
       this.renderFrame();
@@ -386,7 +387,7 @@ class NautilusBlock extends MarkdownRenderChild {
         })
       : null;
     if (playBtn) {
-      playBtn.innerHTML = PLAY_SVG;
+      setIcon(playBtn, "play");
       playBtn.disabled = this.state.playing;
       playBtn.addEventListener("click", () => this.playback());
     }
@@ -410,14 +411,14 @@ class NautilusBlock extends MarkdownRenderChild {
       this.simMin = sim;
       this.setPointer?.(sim);
       if (prog < 1) {
-        this.rafId = requestAnimationFrame(tick);
+        this.rafId = window.requestAnimationFrame(tick);
       } else {
         this.state.playing = false;
         this.simMin = null;
         this.renderFrame();
       }
     };
-    this.rafId = requestAnimationFrame(tick);
+    this.rafId = window.requestAnimationFrame(tick);
   }
 
   private async onProgressClick(ev: NautEvent): Promise<void> {
@@ -637,7 +638,7 @@ export default class NautilusLogPlugin extends Plugin {
   }
 
   async loadSettings(): Promise<void> {
-    const data = await this.loadData();
+    const data = (await this.loadData()) as PersistedData | null;
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
     this.pomoStartMs = data?.pomoStartMs ?? null;
   }
@@ -656,7 +657,7 @@ class NautilusSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Nautilus Log" });
+    new Setting(containerEl).setName("Nautilus Log").setHeading();
 
     new Setting(containerEl)
       .setName("Workday start")
@@ -697,7 +698,6 @@ class NautilusSettingTab extends PluginSettingTab {
         s
           .setLimits(5, 60, 5)
           .setValue(this.plugin.settings.defaultDuration)
-          .setDynamicTooltip()
           .onChange(async (v) => {
             this.plugin.settings.defaultDuration = v;
             await this.plugin.saveSettings();
@@ -711,7 +711,6 @@ class NautilusSettingTab extends PluginSettingTab {
         s
           .setLimits(15, 30, 1)
           .setValue(this.plugin.settings.legendLenLimit)
-          .setDynamicTooltip()
           .onChange(async (v) => {
             this.plugin.settings.legendLenLimit = v;
             await this.plugin.saveSettings();
@@ -776,7 +775,6 @@ class NautilusSettingTab extends PluginSettingTab {
           s
             .setLimits(0, 120, 5)
             .setValue(this.plugin.settings.pomodoroThreshold)
-            .setDynamicTooltip()
             .onChange(async (v) => {
               this.plugin.settings.pomodoroThreshold = v;
               await this.plugin.saveSettings();
@@ -792,7 +790,6 @@ class NautilusSettingTab extends PluginSettingTab {
           s
             .setLimits(0, 120, 5)
             .setValue(this.plugin.settings.recentRetention)
-            .setDynamicTooltip()
             .onChange(async (v) => {
               this.plugin.settings.recentRetention = v;
               await this.plugin.saveSettings();
@@ -808,7 +805,6 @@ class NautilusSettingTab extends PluginSettingTab {
           s
             .setLimits(0, 240, 10)
             .setValue(this.plugin.settings.forgottenTimerWarning)
-            .setDynamicTooltip()
             .onChange(async (v) => {
               this.plugin.settings.forgottenTimerWarning = v;
               await this.plugin.saveSettings();

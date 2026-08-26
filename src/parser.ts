@@ -79,7 +79,7 @@ export function parseDuration(s: string, settings: NautilusSettings): { duration
   return { duration: settings.defaultDuration, cleaned: s };
 }
 
-const PROGRESS_RE = /(\sd)(\d{1,3})(\%)/;
+const PROGRESS_RE = /(\sd)(\d{1,3})(%)/;
 
 export function parseProgress(s: string): { progress: number; cleaned: string } {
   const m = s.match(PROGRESS_RE);
@@ -136,7 +136,7 @@ export function parseDone(s: string, checkboxDone: boolean): { done: boolean; cl
   if (roamDone) {
     return {
       done: true,
-      cleaned: s.replace(ROAM_DONE_RE, "").replace(/\s\%\d{1,3}/, ""),
+      cleaned: s.replace(ROAM_DONE_RE, "").replace(/\s%\d{1,3}/, ""),
     };
   }
   return { done: checkboxDone, cleaned: s };
@@ -167,11 +167,11 @@ export function parseRest(s: string): string {
     .replace(/\{\{\[\[DONE\]\]\}\}/g, "")
     .replace(/\[\[(.*?)\]\]/g, "$1")
     .replace(/\*\*(.*?)\*\*/g, "$1")
-    .replace(/\_\_(.*?)\_\_/g, "$1")
+    .replace(/__(.*?)__/g, "$1")
     .replace(/\^\^(.*?)\^\^/g, "$1")
-    .replace(/\=\=(.*?)\=\=/g, "$1")
+    .replace(/==(.*?)==/g, "$1")
     .replace(/\*(.*?)\*/g, "$1")
-    .replace(/\{\{(\[\[)?embed(\]\])?\:/g, "")
+    .replace(/\{\{(\[\[)?embed(\]\])?:/g, "")
     .replace(/\}\}/g, "")
     .replace(/---/g, "")
     .replace(/\s\s/g, " ")
