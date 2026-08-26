@@ -1,0 +1,139 @@
+/* Nautilus Log — Obsidian plugin styles (ported from the Roam extension) */
+
+:root {
+  --naut-text-main: #555555;
+  --naut-text-sub: #aaaaaa;
+  --naut-spiral: #888888;
+}
+
+.theme-dark {
+  --naut-text-main: #eeeeee;
+  --naut-text-sub: #cccccc;
+  --naut-spiral: #aaaaaa;
+}
+
+.nautilus-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  width: 100%;
+  position: relative;
+}
+
+.nautilus-svg {
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.05));
+  transition: filter 0.3s ease;
+  margin-bottom: 8px;
+}
+
+.nautilus-slice {
+  transition: fill 0.25s ease, stroke 0.25s ease, transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  transform-origin: center;
+}
+
+.event-slice-group:hover .nautilus-slice {
+  filter: brightness(1.1) drop-shadow(0px 2px 6px rgba(0, 0, 0, 0.15));
+  stroke: rgba(255, 255, 255, 0.7);
+  stroke-width: 1.5px;
+}
+
+.event-slice-group text {
+  transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275), font-weight 0.2s ease, filter 0.2s ease;
+}
+
+.event-slice-group:hover text {
+  font-weight: bold;
+  filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.15));
+  transform: translateX(3px);
+}
+
+.nautilus-link-line {
+  transition: opacity 0.3s ease, stroke-width 0.2s ease;
+  opacity: 0.4;
+  stroke-dasharray: 4, 3;
+}
+
+.event-slice-group:hover .nautilus-link-line {
+  opacity: 0.9;
+  stroke-dasharray: none;
+  stroke-width: 1.5px;
+}
+
+.nautilus-controls-top {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  gap: 8px;
+  opacity: 0.2;
+  transition: opacity 0.3s ease;
+  z-index: 10;
+}
+
+.nautilus-container:hover .nautilus-controls-top {
+  opacity: 1;
+}
+
+.nautilus-toggle-btn {
+  background: transparent;
+  color: #888;
+  padding: 6px;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  box-shadow: none;
+}
+
+.nautilus-toggle-btn:hover {
+  background-color: rgba(0, 0, 0, 0.05);
+  color: #333;
+  transform: scale(1.1);
+}
+
+.nautilus-toggle-btn:active {
+  transform: scale(0.95);
+}
+
+.nautilus-toggle-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.theme-dark .nautilus-toggle-btn {
+  color: #aaa;
+}
+
+.theme-dark .nautilus-toggle-btn:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.theme-dark .nautilus-svg {
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.3));
+}
+
+.nautilus-svg.playback-active .nautilus-slice,
+.nautilus-svg.playback-active .nautilus-slice-group text,
+.nautilus-svg.playback-active .nautilus-link-line {
+  opacity: 0;
+  animation: nautilusSlicePopIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+  animation-delay: var(--pb-delay, 0s);
+  transform-origin: center;
+}
+
+@keyframes nautilusSlicePopIn {
+  0% {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

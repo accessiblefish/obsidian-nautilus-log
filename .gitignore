@@ -1,0 +1,15 @@
+# intelliJ
+.idea/
+
+# npm
+node_modules/
+
+# build output (attached to GitHub releases instead)
+main.js
+*.js.map
+
+# obsidian
+data.json
+
+# macOS
+.DS_Store
