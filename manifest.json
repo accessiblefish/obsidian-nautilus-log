@@ -3,7 +3,7 @@
   "name": "Nautilus Log",
   "version": "0.1.0",
   "minAppVersion": "1.4.0",
-  "description": "A transparent dynamic day planner: renders a spiral (nautilus) timeline of your tasks and events, with a live now-pointer that pushes unfinished tasks forward.",
+  "description": "A visual time-blocking and daily planning plugin: fixed events stay pinned to a spiral timeline, flexible tasks fill the gaps, and a now-pointer pushes unfinished tasks forward.",
   "author": "accessiblefish",
   "authorUrl": "https://github.com/accessiblefish/obsidian-nautilus-log",
   "isDesktopOnly": false

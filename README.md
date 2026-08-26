@@ -1,78 +1,58 @@
-# Nautilus Log
+# Obsidian Nautilus Log
+> A visual time-blocking and daily planning plugin for Obsidian, ported from [404KSG's roam-nautilus-log](https://github.com/404KSG/roam-nautilus-log) for Roam Research.
 
-Your whole day on one spiral — a living day planner for Obsidian.
+**English** · [简体中文](./README.zh.md)
 
-## Why
+Inspired by YNAB's core philosophy "Give every dollar a job", this plugin applies the concept to time management: "Give every minute a job."
 
-Todo lists tell you *what* to do, but not *when* — and the moment your plan slips, the list goes stale and you replan in your head all day.
+![overview](https://raw.githubusercontent.com/accessiblefish/obsidian-nautilus-log/main/docs/assets/overview.png)
 
-Nautilus Log draws your day as a spiral timeline:
+## Key Features
+### Inherited Core Philosophy
+- A plan that fits time. See Planned demand, Available time, fixed Events, remaining capacity, and work that cannot fit today.
+- Flexible scheduling without a black box. Events keep their time; unfinished tasks move forward in list order.
+- A day shaped around you. Start at any whole hour and continue past midnight when the plan belongs to a late or overnight schedule.
+- Low-friction execution. Work from estimates alone, run a standalone POMO, or optionally track tasks with compatible LOGBOOK:: / CLOCK: records.
+- A useful daily review. Compare Planned and Actual time without leaving your markdown notes.
 
-- **Fixed events** (meetings, lunch) are pinned to their time slots.
-- **Flexible tasks** automatically fill the gaps between them.
-- **A red "now" pointer** sweeps the dial and pushes unfinished tasks forward, so the plan is always current — you never replan by hand.
-- **Done tasks stay visible** on the spiral at the time you actually finished them, so the day becomes a log, not just a plan.
+## Obsidian-Native Enhancements
+Compared to the original Roam version, this port brings native Obsidian workflows and quality-of-life updates:
 
-The shrinking spiral mirrors your energy through the day: big loops in the morning, tight loops at night.
+- **Markdown-Native Parser**: Uses native Obsidian Markdown list items (- [ ]) instead of Roam's internal block syntax.
+- **Built-in Completion Timestamp**: Automatically appends completion timestamps (e.g., d08:47) upon task completion for effortless tracking.
 
-## What it looks like
+See the [user guide](./docs/guide.md) for the Execution Layer (CLOCK tracking, POMO, daily review), settings, and commands.
 
-A daily note like this:
+## Quick Start
+### Installation
+- Via BRAT: Add `accessiblefish/obsidian-nautilus-log` in the BRAT settings.
+- Manual: Download the latest release from the Releases tab and place main.js, manifest.json, and styles.css into your vault's .obsidian/plugins/obsidian-nautilus-log/ folder.
 
-    ```nautilus
-    ```
+### Usage
+Open today's Daily Note. The plugin detects daily notes by filename (default `YYYY-MM-DD`); if yours differ, set **Daily note date format** in the plugin settings.
 
-    - 09:00-09:30 Standup
-    - 12:30-14:00 Lunch
-    - [ ] Write weekly report 45m
-    - [ ] Reply to emails
-    - [x] Morning run 30m
+Insert a Nautilus code block:
 
-…renders as a spiral: standup and lunch anchored at their hours, the report and emails placed in the free gaps, and the morning run shown where it was actually done.
+````Markdown
+```nautilus
+```
 
-## How to use
+- 07:00-07:30 Breakfast
+- [x] Reading 30min d08:47
+- 11:30-12:00 Lunch
+- [ ] Review 30min
+- [ ] Fitness 40min
+````
 
-1. Add a ```` ```nautilus ```` code block to your daily note.
-2. List your tasks directly below the block. That's it.
+Write your fixed events and tasks immediately following the block. Use simple duration estimations (e.g., `30min`, `45m`, `1h30m`). Tasks without an explicit duration fall back to the default time configured in settings.
 
-Writing tasks:
+> **Note:** This plugin modifies your notes. Checking off a task below a nautilus block appends a `dHH:MM` completion timestamp to that line; unchecking removes it. This is the only write the plugin performs, and it can be turned off in the plugin settings ("Stamp completion time").
 
-- **Fixed event**: give it a time range — `09:00-09:30 Standup`
-- **Flexible task**: just write it, optionally with a duration — `Write report 45m` or `1h` (default duration in settings)
-- **Order matters**: a task listed below an event starts after that event ends
-- **Check off as usual** (`- [x]`). The plugin stamps the completion time automatically, so the task appears on the spiral where you finished it. Unchecking removes the stamp. (You can turn this off in settings.)
+## Credits & Acknowledgements
+- Original concept & Roam plugin: [Nautilus](https://github.com/tombarys/roam-depot-nautilus) by Tomáš Barys.
+- Enhanced fork: [Nautilus Enhanced](https://github.com/hopeserena/nautilus-enhanced) by hopeserena.
+- Direct port source: [roam-nautilus-log](https://github.com/404KSG/roam-nautilus-log) by 404KSG.
+- Obsidian Port: Re-architected and maintained for Obsidian.
 
-On the chart:
-
-- **Click a task** on the spiral to add +10% progress — at 100% it's checked off for you.
-- **Eye button** (top right): hide/show finished tasks.
-- **Play button**: watch a 6-second replay of your whole day.
-
-Settings let you change the workday start (4:00–12:00), default task duration, label length, and the highlight tag — or override them per block:
-
-    ```nautilus
-    start: 7
-    duration: 20
-    len: 25
-    tag: #focus
-    ```
-
-## Installation
-
-**Community plugins** (once accepted): Settings → Community plugins → Browse → search "Nautilus Log".
-
-**BRAT**: install the [BRAT](https://github.com/TfTHacker/obsidian42-brat) plugin, then add this repository as a beta plugin.
-
-**Manual**: download `main.js`, `manifest.json`, `styles.css` from the latest release into `<vault>/.obsidian/plugins/nautilus-log/`, then enable the plugin.
-
-## Credits
-
-This is a port of the **Nautilus** extension for Roam Research, originally created by [Tomas Barys](https://github.com/tombarys/roam-depot-nautilus), with enhancements from [hopeserena's fork](https://github.com/hopeserena/nautilus-enhanced). All credit for the concept and design goes to them. MIT licensed.
-
----
-
-## 中文简介
-
-把一整天画在一枚鹦鹉螺上：固定日程钉在表盘上，弹性待办自动填进空档，红色"现在"指针推着未完成的任务往前走——计划永远是新的，不用手动重排。完成的任务会留在实际完成的位置，一天结束，计划即日志。
-
-用法：在日记里插入 ```` ```nautilus ```` 代码块，下方列出任务即可。`09:00-09:30 站会` 是固定日程，`写周报 45m` 是弹性待办。点击图上的任务 +10% 进度，勾选任务自动打完成时间戳。
+## License
+[MIT License](./LICENSE)
