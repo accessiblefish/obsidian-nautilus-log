@@ -3,19 +3,21 @@ import { Center, NautEvent, NautilusSettings, Rect } from "./types";
 import {
   PI,
   RESERVE,
-  SNAIL_OUTER_RADII,
+  MAX_PROFILE_RADIUS,
+  SNAIL_PROFILE_RADII,
   angleToRad,
   atVertex,
   createArcPath,
   getHourBoundaries,
   getLegendRect,
   minToAngle,
-  outerRadiusAt,
+  profileRadius,
+  rawProfileRadius,
+  spiralCellInnerIndex,
   posSweepAngleMid,
-  rawRadius,
 } from "./geometry";
+
 import { fillDay } from "./scheduler";
-import { WORKDAY_END } from "./geometry";
 
 const FONT_FAMILY =
   "'方正屏显雅宋简体', 'FZPingXianYaSong-R-GBK', 'PingFang SC', 'Microsoft YaHei', sans-serif";
@@ -40,14 +42,18 @@ const PLAYBACK_SECONDS = 6;
 
 /**
  * Pop-in delay for the playback animation, in the SAME domain as the
- * pointer sweep: workdayStart..WORKDAY_END mapped onto the playback
+ * pointer sweep: workdayStart..workdayEnd mapped onto the playback
  * duration, clamped so early/late slices just appear at the ends.
  */
-function playbackDelay(taskStartMin: number | null | undefined, workdayStart: number): string {
+function playbackDelay(
+  taskStartMin: number | null | undefined,
+  workdayStart: number,
+  workdayEnd: number
+): string {
   const start = taskStartMin ?? workdayStart;
   const frac = Math.min(
     1,
-    Math.max(0, (start - workdayStart) / (WORKDAY_END - workdayStart))
+    Math.max(0, (start - workdayStart) / (workdayEnd - workdayStart))
   );
   return `${frac * PLAYBACK_SECONDS}s`;
 }
@@ -134,7 +140,11 @@ function renderSlice(
       )
     : posSweepAngleMid(startRad, endRad);
   const lineOuterRadius = hasTaskSpan
-    ? outerRadiusAt((o.taskStartMin! + o.taskEndMin!) / 120, ctx.scaler)
+    ? profileRadius(
+        (o.taskStartMin! + o.taskEndMin!) / 2,
+        settings.workdayStart,
+        ctx.scaler
+      )
     : outerRadius;
 
   const bg = o.bgColor ?? "rgba(255,255,255,0)";
@@ -163,7 +173,7 @@ function renderSlice(
   // their start time
   path.style.setProperty(
     "--pb-delay",
-    playbackDelay(o.taskStartMin, ctx.p.settings.workdayStart)
+    playbackDelay(o.taskStartMin, settings.workdayStart, settings.workdayEnd)
   );
   if (o.clickToProgress && o.onClick) {
     path.style.cursor = "pointer";
@@ -208,7 +218,7 @@ function renderSlice(
     const group = svgEl("g", { class: "nautilus-slice-group" });
     group.style.setProperty(
       "--pb-delay",
-      playbackDelay(o.taskStartMin, ctx.p.settings.workdayStart)
+      playbackDelay(o.taskStartMin, settings.workdayStart, settings.workdayEnd)
     );
     group.appendChild(
       svgEl("path", {
@@ -277,24 +287,41 @@ function renderSlice(
 function renderBlueprint(ctx: Ctx): SVGGElement {
   const g = svgEl("g");
   const ws = ctx.p.settings.workdayStart;
-  const entries: [number, number, number][] = [];
-  // add template hour slices for every hour before 8:00 that the workday
-  // start reaches into (4:00 start -> hours 4,5,6,7; 7:00 start -> hour 7)
-  if (ws < 480) {
-    for (let h = Math.floor(ws / 60); h <= 7; h++) {
-      const angle = minToAngle(h * 60);
-      entries.push([angle, angle + 30, h]);
-    }
-  }
-  for (let i = 0; i < 12; i++) entries.push([i * 30, i * 30 + 30, 9 + i]);
-  entries.push([0, 30, 21], [330, 360, 8]);
-
-  for (const [s, e, hour] of entries) {
+  const we = ctx.p.settings.workdayEnd;
+  // one cell per hour across the whole window (which may cross midnight);
+  // when the window spans more than 12h, earlier cells raise their inner
+  // radius so the +12h paired cell on the same angle stays visible
+  for (let m = ws; m < we; m += 60) {
+    const end = Math.min(we, m + 60);
+    const innerIdx = spiralCellInnerIndex(m, we, ws);
+    const innerR =
+      innerIdx != null
+        ? Math.max(ctx.innerRadius, SNAIL_PROFILE_RADII[innerIdx] * ctx.scaler)
+        : ctx.innerRadius;
     g.appendChild(
-      renderSlice(s, e, ctx.innerRadius, outerRadiusAt(hour, ctx.scaler), ctx, {
+      renderSlice(minToAngle(m), minToAngle(end), innerR, profileRadius(m, ws, ctx.scaler), ctx, {
         borderColor: SPIRAL_COLOR,
-        timestamp: String(hour),
+        timestamp: String(Math.floor(m / 60) % 24),
       })
+    );
+  }
+  // tip label "0" when the window ends exactly at midnight
+  if (we % 1440 === 0) {
+    const rad = angleToRad(minToAngle(we));
+    const r = profileRadius(we - 60, ws, ctx.scaler) + 12;
+    g.appendChild(
+      svgEl(
+        "text",
+        {
+          x: ctx.center.cx + Math.cos(rad) * r,
+          y: ctx.center.cy - Math.sin(rad) * r,
+          "font-size": ctx.fontSize - 3,
+          fill: SPIRAL_COLOR,
+          "text-anchor": "middle",
+          "alignment-baseline": "central",
+        },
+        [txt("0")]
+      )
     );
   }
   return g;
@@ -352,7 +379,7 @@ function eventSlices(
         minToAngle(s),
         minToAngle(e),
         ctx.innerRadius,
-        outerRadiusAt(Math.floor(s / 60), ctx.scaler),
+        profileRadius(s, ctx.p.settings.workdayStart, ctx.scaler),
         ctx,
         {
           bgColor: bg,
@@ -389,7 +416,7 @@ function eventsToSlices(
       angleToRad(minToAngle(event.start)),
       angleToRad(minToAngle(event.end))
     );
-    const radius = rawRadius(Math.floor(event.start / 60));
+    const radius = rawProfileRadius(event.start, ctx.p.settings.workdayStart);
     const rect = getLegendRect(
       rects,
       event.description,
@@ -416,10 +443,22 @@ function eventsToNewDimensions(
   center0: Center,
   ctx: Omit<Ctx, "center">
 ): [number, number, number, number] {
-  let leftMin = center0.cx - outerRadiusAt(9, ctx.scaler);
-  let rightMax = center0.cx + outerRadiusAt(14, ctx.scaler);
-  let topMin = center0.cy - outerRadiusAt(11, ctx.scaler);
-  let bottomMax = center0.cy + outerRadiusAt(17, ctx.scaler);
+  // initial bounding box: sample the spiral itself (every 15 min across the
+  // window) since the radius profile is anchored to the workday start
+  const ws = ctx.p.settings.workdayStart;
+  const we = ctx.p.settings.workdayEnd;
+  let leftMin = center0.cx;
+  let rightMax = center0.cx;
+  let topMin = center0.cy;
+  let bottomMax = center0.cy;
+  for (let m = ws; m <= we; m += 15) {
+    const r = profileRadius(Math.min(m, we - 1), ws, ctx.scaler) + 16;
+    const rad = angleToRad(minToAngle(m));
+    leftMin = Math.min(leftMin, center0.cx + Math.cos(rad) * r);
+    rightMax = Math.max(rightMax, center0.cx + Math.cos(rad) * r);
+    topMin = Math.min(topMin, center0.cy - Math.sin(rad) * r);
+    bottomMax = Math.max(bottomMax, center0.cy - Math.sin(rad) * r);
+  }
   const rects: Rect[] = [];
   for (const event of events) {
     if (event.freetime) continue;
@@ -427,7 +466,7 @@ function eventsToNewDimensions(
       angleToRad(minToAngle(event.start)),
       angleToRad(minToAngle(event.end))
     );
-    const radius = rawRadius(Math.floor(event.start / 60));
+    const radius = rawProfileRadius(event.start, ws);
     const rect = getLegendRect(
       rects,
       event.description,
@@ -448,9 +487,7 @@ function eventsToNewDimensions(
     RESERVE + center0.cx - leftMin,
     RESERVE + rightMax - leftMin,
     RESERVE + center0.cy - topMin,
-    3 * RESERVE +
-      (bottomMax - topMin) +
-      (ctx.p.settings.workdayStart < 420 ? RESERVE : 0),
+    3 * RESERVE + (bottomMax - topMin),
   ];
 }
 
@@ -517,7 +554,7 @@ function renderNowPointer(ctx: Ctx): SVGLineElement {
 function setPointerPosition(line: SVGLineElement, nowMin: number, ctx: Ctx): void {
   const nowRad = angleToRad(minToAngle(nowMin));
   const r1 = ctx.innerRadius + 2;
-  const r2 = Math.max(...SNAIL_OUTER_RADII) + 15;
+  const r2 = MAX_PROFILE_RADIUS + 15;
   line.setAttribute("x1", String(ctx.center.cx + r1 * Math.cos(nowRad)));
   line.setAttribute("y1", String(ctx.center.cy - r1 * Math.sin(nowRad)));
   line.setAttribute("x2", String(ctx.center.cx + r2 * Math.cos(nowRad)));
@@ -532,6 +569,8 @@ export interface NautilusRender {
   svg: SVGSVGElement;
   /** Move the now-pointer without rebuilding the DOM (used during playback). */
   setPointer: (nowMin: number) => void;
+  /** Todos that did not fit into the workday window. */
+  overflow: NautEvent[];
 }
 
 export function buildNautilusSvg(
@@ -546,7 +585,12 @@ export function buildNautilusSvg(
   const h0 = 0.7 * w0;
   const innerRadius = 50 * scaler;
 
-  const scheduled = fillDay(pendings, p.settings.workdayStart, p.planFromTime);
+  const { scheduled, overflow } = fillDay(
+    pendings,
+    p.settings.workdayStart,
+    p.settings.workdayEnd,
+    p.planFromTime
+  );
   const allForDim = p.showDone ? [...scheduled, ...dones] : scheduled;
 
   const baseCtx = { p, scaler, fontSize, innerRadius, isMobile };
@@ -597,5 +641,6 @@ export function buildNautilusSvg(
     setPointer: (nowMin: number) => {
       if (pointer) setPointerPosition(pointer, nowMin, ctx);
     },
+    overflow,
   };
 }

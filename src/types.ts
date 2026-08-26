@@ -1,6 +1,8 @@
 export interface NautilusSettings {
-  /** minutes from midnight, 480 = 8:00 */
+  /** minutes from midnight (whole hours), 480 = 8:00 */
   workdayStart: number;
+  /** minutes from midnight; > 1440 when the window crosses midnight */
+  workdayEnd: number;
   /** default flexible-todo duration in minutes */
   defaultDuration: number;
   /** max legend text length (chars) */
@@ -13,6 +15,14 @@ export interface NautilusSettings {
   showPlaybackButton: boolean;
   /** moment.js format matching daily note filenames, e.g. "YYYY-MM-DD" */
   dailyNoteFormat: string;
+  /** Execution Layer: CLOCK tracking, POMO and daily review (default off) */
+  executionLayer: boolean;
+  /** POMO live signal threshold in minutes */
+  pomodoroThreshold: number;
+  /** minutes a closed task stays in the Timing recents list; 0 disables */
+  recentRetention: number;
+  /** warn when a CLOCK runs longer than this; 0 disables */
+  forgottenTimerWarning: number;
   /**
    * When a checked todo has no `dHH:MM` completion timestamp, append one
    * automatically (replicates Roam's Todo Trigger; without a timestamp a
@@ -23,12 +33,17 @@ export interface NautilusSettings {
 
 export const DEFAULT_SETTINGS: NautilusSettings = {
   workdayStart: 480,
+  workdayEnd: 1320,
   defaultDuration: 15,
   legendLenLimit: 22,
   customColorTag: "",
   customColor: "rgba(255,0,0,0.5)",
   showPlaybackButton: true,
   dailyNoteFormat: "YYYY-MM-DD",
+  executionLayer: false,
+  pomodoroThreshold: 45,
+  recentRetention: 45,
+  forgottenTimerWarning: 120,
   stampOnCheck: true,
 };
 
@@ -43,6 +58,8 @@ export interface NautEvent {
   /** minutes from midnight */
   start: number;
   end: number;
+  /** original estimate before progress scaling */
+  estimate: number;
   done: boolean;
   bgColor: string | null;
   doneAt: number | null;
@@ -50,6 +67,17 @@ export interface NautEvent {
   todo: boolean;
   freetime: boolean;
   startAfter: number;
+}
+
+/**
+ * Normalize the [workdayStart, workdayEnd] window: an end at or before the
+ * start means the window continues past midnight into the next day.
+ */
+export function workdayWindow(s: NautilusSettings): [number, number] {
+  const ws = s.workdayStart;
+  let we = s.workdayEnd;
+  if (we <= ws) we += 1440;
+  return [ws, we];
 }
 
 export interface Rect {

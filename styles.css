@@ -62,14 +62,13 @@
 }
 
 .nautilus-controls-top {
-  position: absolute;
-  top: 12px;
-  right: 12px;
   display: flex;
+  justify-content: flex-end;
   gap: 8px;
+  width: 100%;
+  max-width: 600px;
   opacity: 0.2;
   transition: opacity 0.3s ease;
-  z-index: 10;
 }
 
 .nautilus-container:hover .nautilus-controls-top {
@@ -125,6 +124,163 @@
   animation: nautilusSlicePopIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
   animation-delay: var(--pb-delay, 0s);
   transform-origin: center;
+}
+
+.nautilus-overflow {
+  font-size: 12px;
+  color: var(--naut-text-sub);
+  text-align: center;
+  margin-top: 2px;
+  max-width: 600px;
+}
+
+/* ---- execution layer panel ---- */
+
+.nautilus-exec {
+  width: 100%;
+  max-width: 600px;
+  margin-bottom: 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--naut-text-main);
+}
+
+.nautilus-exec-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.nautilus-exec-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.nautilus-exec-tab {
+  background: transparent;
+  border: none;
+  color: var(--naut-text-sub);
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  box-shadow: none;
+}
+
+.nautilus-exec-tab.is-active {
+  color: var(--naut-text-main);
+  background: var(--background-modifier-hover);
+  font-weight: 600;
+}
+
+.nautilus-exec-pomo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nautilus-exec-body {
+  padding: 4px 8px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.nautilus-exec-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.nautilus-exec-desc {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nautilus-exec-time,
+.nautilus-exec-elapsed {
+  font-variant-numeric: tabular-nums;
+  color: var(--naut-text-sub);
+}
+
+.nautilus-exec-row.is-live .nautilus-exec-elapsed {
+  color: var(--naut-text-main);
+  font-weight: 600;
+}
+
+.nautilus-exec-dot {
+  color: #ea0f0f;
+  font-size: 9px;
+}
+
+.nautilus-exec-warn {
+  color: #ea0f0f !important;
+}
+
+.nautilus-exec-btn {
+  background: transparent;
+  border: 1px solid var(--background-modifier-border);
+  color: var(--naut-text-sub);
+  padding: 1px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  box-shadow: none;
+}
+
+.nautilus-exec-btn:hover {
+  color: var(--naut-text-main);
+  background: var(--background-modifier-hover);
+}
+
+.nautilus-exec-empty {
+  color: var(--naut-text-sub);
+  padding: 6px 0;
+  text-align: center;
+}
+
+.nautilus-exec-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0;
+}
+
+.nautilus-exec-table th,
+.nautilus-exec-table td {
+  text-align: left;
+  padding: 2px 4px;
+  border: none;
+  font-size: 12px;
+}
+
+.nautilus-exec-table th {
+  color: var(--naut-text-sub);
+  font-weight: 500;
+}
+
+.nautilus-exec-table tr.is-not-tracked td,
+.nautilus-exec-table tr.is-not-started td {
+  color: var(--naut-text-sub);
+}
+
+.nautilus-exec-table td.is-over {
+  color: #ea0f0f;
+}
+
+.nautilus-exec-table td.is-under {
+  color: #2e9e5b;
+}
+
+.nautilus-exec-summary {
+  padding: 4px 0 2px;
+  color: var(--naut-text-sub);
+  border-top: 1px solid var(--background-modifier-border);
+  margin-top: 4px;
 }
 
 @keyframes nautilusSlicePopIn {

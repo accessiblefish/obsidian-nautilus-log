@@ -5,39 +5,69 @@ import { Center, NautilusSettings, Rect } from "./types";
  * ------------------------------------------------------------------ */
 
 export const PI = Math.PI;
-export const WORKDAY_END = 1320; // 22:00
 export const TRIES_THRESHOLD = 25;
 export const RESERVE = 15;
 export const INIT_STARTING_DISTANCE = 30;
 
 /**
- * Outer radius of the spiral per hour of day (index = hour, 0..24).
- * Hours 0-3 are night (collapsed at center); the day starts at 4:00,
- * peaks at 8:00 and spirals inward.
+ * Spiral radius profile, indexed by hours elapsed since the workday start
+ * (offset by 5 so indices 0-4 collapse to 0). Anchoring the profile to the
+ * workday start — instead of the hour of day — is what lets the day begin
+ * at any hour and continue past midnight. Ported from the Roam extension's
+ * snail-blueprint-outer-radiuses.
  */
-export const SNAIL_OUTER_RADII: number[] = (() => {
-  const arr = [0, 0, 0, 0, 130, 135, 140, 145, 150];
+export const SNAIL_PROFILE_RADII: number[] = (() => {
+  const arr = [0, 0, 0, 0, 0, 135, 140, 145, 150];
   for (let r = 145; r >= 70; r -= 5) arr.push(r);
+  arr.push(68, 66, 64, 62);
   return arr;
 })();
 
-function mod(a: number, n: number): number {
-  return ((a % n) + n) % n;
+export const MAX_PROFILE_RADIUS = 150;
+
+/** Profile index for an absolute minute: 5 + whole hours since workday start. */
+export function spiralProfileIndex(minute: number, workdayStart: number): number {
+  const offset = Math.max(0, Math.floor((minute - workdayStart) / 60));
+  return Math.min(SNAIL_PROFILE_RADII.length - 1, 5 + offset);
 }
 
-/** Scaled outer radius at hour t (used for drawing). */
-export function outerRadiusAt(t: number, scaler: number): number {
-  return SNAIL_OUTER_RADII[mod(Math.floor(t), SNAIL_OUTER_RADII.length)] * scaler;
+/** Scaled outer radius of the spiral at an absolute minute (for drawing). */
+export function profileRadius(
+  minute: number,
+  workdayStart: number,
+  scaler: number
+): number {
+  return SNAIL_PROFILE_RADII[spiralProfileIndex(minute, workdayStart)] * scaler;
 }
 
-/** Raw outer radius at hour t (used for legend placement, as in the original). */
-export function rawRadius(t: number): number {
-  return SNAIL_OUTER_RADII[mod(Math.floor(t), SNAIL_OUTER_RADII.length)];
+/** Raw outer radius at an absolute minute (for legend placement). */
+export function rawProfileRadius(minute: number, workdayStart: number): number {
+  return SNAIL_PROFILE_RADII[spiralProfileIndex(minute, workdayStart)];
+}
+
+/**
+ * The dial maps 12 hours per revolution, so a blueprint cell starting at
+ * `minute` overlaps the cell at `minute + 12h` if both are inside the
+ * window. When they coexist, the earlier cell's inner radius is raised to
+ * the later cell's outer radius. Returns the paired profile index or null.
+ */
+export function spiralCellInnerIndex(
+  startMinute: number,
+  workdayEnd: number,
+  workdayStart: number
+): number | null {
+  const paired = startMinute + 12 * 60;
+  if (paired >= workdayEnd) return null;
+  return 5 + Math.floor((paired - workdayStart) / 60);
 }
 
 /* ------------------------------------------------------------------ *
  * Angle math
  * ------------------------------------------------------------------ */
+
+function mod(a: number, n: number): number {
+  return ((a % n) + n) % n;
+}
 
 export function angleToRad(angle: number): number {
   return (180 - angle) * (PI / 180);

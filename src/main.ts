@@ -8,7 +8,7 @@ import {
   TFile,
   moment,
 } from "obsidian";
-import { DEFAULT_SETTINGS, NautEvent, NautilusSettings } from "./types";
+import { DEFAULT_SETTINGS, NautEvent, NautilusSettings, workdayWindow } from "./types";
 import {
   bumpProgressInLine,
   fixTaskLines,
@@ -16,8 +16,20 @@ import {
   parseRowParams,
   TaskLine,
 } from "./parser";
-import { addStartAfter } from "./scheduler";
-import { WORKDAY_END } from "./geometry";
+import { addStartAfter, alignIntervalToWindow } from "./scheduler";
+import {
+  ClockInterval,
+  OpenClock,
+  ReviewTask,
+  actualMinutesInWindow,
+  buildDailyReview,
+  clockEntriesForTask,
+  clockInTask,
+  closeClockLine,
+  findOpenClock,
+  lastClockEndMs,
+} from "./timing";
+import { PanelTab, renderExecPanel, tickElapsedLabels } from "./panel";
 import { buildNautilusSvg } from "./render";
 
 const LIST_RE = /^\s*(?:[-*+]|\d+\.)\s+/;
@@ -45,18 +57,33 @@ function isTodayDailyNote(file: TFile, format: string): boolean {
   }
 }
 
-/** Collect list items directly below the code block. */
+/**
+ * Collect list items directly below the code block. Lines indented deeper
+ * than the first task (LOGBOOK drawers, CLOCK entries, subtasks) belong to
+ * their parent task and are never parsed as tasks themselves.
+ */
 function collectTasks(lines: string[], fromLine: number): TaskLine[] {
   const out: TaskLine[] = [];
   let started = false;
+  let baseIndent = -1;
   for (let i = fromLine; i < lines.length; i++) {
     const line = lines[i];
     if (line.trim() === "") {
       if (started) break;
       continue;
     }
-    if (!LIST_RE.test(line)) break;
-    started = true;
+    const indent = /^\s*/.exec(line)![0].length;
+    if (!LIST_RE.test(line)) {
+      if (started && indent > baseIndent) continue; // non-list child content
+      break;
+    }
+    if (!started) {
+      started = true;
+      baseIndent = indent;
+    } else if (indent !== baseIndent) {
+      if (indent > baseIndent) continue; // child line of the previous task
+      else break;
+    }
     const cm = line.match(CHECK_RE);
     let text: string;
     let checked: boolean | null = null;
@@ -66,7 +93,7 @@ function collectTasks(lines: string[], fromLine: number): TaskLine[] {
     } else {
       text = line.replace(LIST_RE, "");
     }
-    out.push({ line: i, text, checked });
+    out.push({ line: i, text, checked, indent });
   }
   return out;
 }
@@ -80,12 +107,27 @@ function parseBlockArgs(source: string, base: NautilusSettings): NautilusSetting
     const key = m[1].toLowerCase();
     const val = m[2];
     const n = parseInt(val, 10);
-    if (key === "start" && n >= 4 && n <= 12) s.workdayStart = n * 60;
+    if (key === "start" && n >= 0 && n <= 23) s.workdayStart = n * 60;
+    else if (key === "end" && n >= 1 && n <= 24) s.workdayEnd = n * 60;
     else if (key === "duration" && n >= 5 && n <= 60) s.defaultDuration = n;
     else if (key === "len" && n >= 15 && n <= 30) s.legendLenLimit = n;
     else if (key === "tag") s.customColorTag = val;
   }
+  const [ws, we] = workdayWindow(s);
+  s.workdayStart = ws;
+  s.workdayEnd = we;
   return s;
+}
+
+/**
+ * "Now" on the window's continuous timeline: when the window crosses
+ * midnight, times before the workday start belong to the next day.
+ */
+function effectiveNow(settings: NautilusSettings): number {
+  const raw = nowMinutes();
+  return settings.workdayEnd > 1440 && raw < settings.workdayStart
+    ? raw + 1440
+    : raw;
 }
 
 /* ------------------------------------------------------------------ */
@@ -102,6 +144,14 @@ class NautilusBlock extends MarkdownRenderChild {
   private simMin: number | null = null;
   private rafId: number | null = null;
   private setPointer: ((nowMin: number) => void) | null = null;
+  /** first line of this block's section, used to pick the primary plan */
+  private sectionStart = 0;
+  private clockInfo = new Map<number, ClockInterval[]>();
+  private openClock: (OpenClock & { description: string }) | null = null;
+  private planTasks: ReviewTask[] = [];
+  private reviewTasks: ReviewTask[] = [];
+  private panelTab: PanelTab = "timing";
+  private windowMs: [number, number] = [0, 0];
 
   constructor(
     private plugin: NautilusLogPlugin,
@@ -121,6 +171,14 @@ class NautilusBlock extends MarkdownRenderChild {
   /** Current file path; survives renames (TFile.path updates in place). */
   getPath(): string {
     return this.file?.path ?? this.ctx.sourcePath;
+  }
+
+  isDailyBlock(): boolean {
+    return this.isDaily;
+  }
+
+  getSectionStart(): number {
+    return this.sectionStart;
   }
 
   onunload(): void {
@@ -150,6 +208,7 @@ class NautilusBlock extends MarkdownRenderChild {
     }
     const content = await this.plugin.app.vault.cachedRead(file);
     if (mySeq !== this.seq) return;
+    this.sectionStart = section.lineStart;
 
     const lines = content.split("\n");
     const settings = parseBlockArgs(this.source, this.plugin.settings);
@@ -168,12 +227,73 @@ class NautilusBlock extends MarkdownRenderChild {
     // Pass 2: parse events.
     const pendings: NautEvent[] = [];
     const dones: NautEvent[] = [];
+    const noteMoment = moment(
+      file.basename,
+      this.plugin.settings.dailyNoteFormat || "YYYY-MM-DD",
+      true
+    );
+    const dayBase = noteMoment.isValid() ? noteMoment.toDate() : new Date();
+    dayBase.setHours(0, 0, 0, 0);
+    const dayBaseMs = dayBase.getTime();
+    const winStartMs = dayBaseMs + settings.workdayStart * 60000;
+    const winEndMs = dayBaseMs + settings.workdayEnd * 60000;
+    this.windowMs = [winStartMs, winEndMs];
+    this.clockInfo.clear();
+    this.planTasks = [];
+    this.reviewTasks = [];
+    const descByLine = new Map<number, string>();
     for (const t of tasks) {
       const ev = parseRowParams(t.text, t.checked === true, t.line, settings);
       if (!ev) continue;
-      if (ev.doneAt != null || (ev.meeting && ev.done)) dones.push(ev);
-      else pendings.push(ev);
+      descByLine.set(t.line, ev.description);
+      const entries = clockEntriesForTask(lines, t.line, t.indent);
+      this.clockInfo.set(t.line, entries);
+      if (ev.todo) {
+        const rt: ReviewTask = {
+          line: t.line,
+          description: ev.description,
+          done: ev.done,
+          plannedMinutes: ev.estimate,
+        };
+        this.reviewTasks.push(rt);
+        if (!ev.done) this.planTasks.push(rt);
+      }
+      if (ev.meeting && ev.done) {
+        dones.push(ev);
+        continue;
+      }
+      if (ev.done && ev.todo) {
+        // historical slice: prefer total valid Actual time; anchor at the
+        // explicit dHH:MM stamp, else at the last CLOCK end. Without either,
+        // no history is invented (the task simply does not appear).
+        const actual = actualMinutesInWindow(
+          entries,
+          winStartMs,
+          winEndMs,
+          Date.now()
+        );
+        const lastEnd = lastClockEndMs(entries);
+        let endMin: number | null = ev.doneAt;
+        if (endMin == null && actual > 0 && lastEnd != null) {
+          endMin = Math.round((lastEnd - dayBaseMs) / 60000);
+        }
+        if (endMin == null) continue;
+        const duration = actual > 0 ? actual : ev.estimate;
+        const [s2, e2] = alignIntervalToWindow(
+          endMin - duration,
+          endMin,
+          settings.workdayStart,
+          settings.workdayEnd
+        );
+        dones.push({ ...ev, start: s2, end: e2, duration });
+        continue;
+      }
+      pendings.push(ev);
     }
+    const open = findOpenClock(lines);
+    this.openClock = open
+      ? { ...open, description: descByLine.get(open.taskLine) ?? "" }
+      : null;
     this.settings = settings;
     this.pendings = addStartAfter(pendings);
     this.dones = dones;
@@ -184,7 +304,7 @@ class NautilusBlock extends MarkdownRenderChild {
   }
 
   renderFrame(): void {
-    const nowMin = this.simMin ?? nowMinutes();
+    const nowMin = this.simMin ?? effectiveNow(this.settings);
     const planFromTime = this.state.playing
       ? 0
       : this.isDaily
@@ -194,28 +314,35 @@ class NautilusBlock extends MarkdownRenderChild {
     this.containerEl.empty();
     const wrap = this.containerEl.createDiv({ cls: "nautilus-container" });
 
-    const controls = wrap.createDiv({ cls: "nautilus-controls-top" });
-    const eyeBtn = controls.createEl("button", {
-      cls: "nautilus-toggle-btn",
-      attr: {
-        title: this.state.showDone ? "隐藏已完成事项" : "显示已完成事项",
-      },
-    });
-    eyeBtn.innerHTML = this.state.showDone ? EYE_SVG : EYE_OFF_SVG;
-    eyeBtn.addEventListener("click", () => {
-      this.state.showDone = !this.state.showDone;
-      this.renderFrame();
-    });
-    const playBtn = this.plugin.settings.showPlaybackButton
-      ? controls.createEl("button", {
-          cls: "nautilus-toggle-btn",
-          attr: { title: "回放一整天 (Hyper-lapse playback)" },
-        })
-      : null;
-    if (playBtn) {
-      playBtn.innerHTML = PLAY_SVG;
-      playBtn.disabled = this.state.playing;
-      playBtn.addEventListener("click", () => this.playback());
+    if (
+      this.plugin.settings.executionLayer &&
+      this.isDaily &&
+      this.plugin.primaryBlock() === this
+    ) {
+      const nowMs = Date.now();
+      renderExecPanel(wrap, {
+        settings: this.plugin.settings,
+        tab: this.panelTab,
+        openClock: this.openClock,
+        planTasks: this.planTasks,
+        entriesByLine: this.clockInfo,
+        review: buildDailyReview(
+          this.reviewTasks,
+          this.clockInfo,
+          this.windowMs[0],
+          this.windowMs[1],
+          nowMs
+        ),
+        pomoStartMs: this.plugin.pomoStartMs,
+        nowMs,
+        onTab: (tab) => {
+          this.panelTab = tab;
+          this.renderFrame();
+        },
+        onClockIn: (line) => void this.plugin.clockIn(this.file, this.getPath(), line),
+        onClockOut: () => void this.plugin.clockOut(this.file, this.getPath()),
+        onPomoToggle: () => void this.plugin.togglePomo(),
+      });
     }
 
     const rendered = buildNautilusSvg(this.pendings, this.dones, {
@@ -230,6 +357,39 @@ class NautilusBlock extends MarkdownRenderChild {
     });
     this.setPointer = rendered.setPointer;
     wrap.appendChild(rendered.svg);
+    if (rendered.overflow.length > 0) {
+      const names = rendered.overflow.map((e) => e.description).join(", ");
+      wrap.createDiv({
+        cls: "nautilus-overflow",
+        text: `Won't fit today: ${names}`,
+      });
+    }
+
+    // controls live in-flow below the chart so they never overlap the
+    // execution panel or Obsidian's own code-block action buttons
+    const controls = wrap.createDiv({ cls: "nautilus-controls-top" });
+    const eyeBtn = controls.createEl("button", {
+      cls: "nautilus-toggle-btn",
+      attr: {
+        title: this.state.showDone ? "Hide completed" : "Show completed",
+      },
+    });
+    eyeBtn.innerHTML = this.state.showDone ? EYE_SVG : EYE_OFF_SVG;
+    eyeBtn.addEventListener("click", () => {
+      this.state.showDone = !this.state.showDone;
+      this.renderFrame();
+    });
+    const playBtn = this.plugin.settings.showPlaybackButton
+      ? controls.createEl("button", {
+          cls: "nautilus-toggle-btn",
+          attr: { title: "Replay the day (hyper-lapse)" },
+        })
+      : null;
+    if (playBtn) {
+      playBtn.innerHTML = PLAY_SVG;
+      playBtn.disabled = this.state.playing;
+      playBtn.addEventListener("click", () => this.playback());
+    }
   }
 
   private playback(): void {
@@ -243,9 +403,10 @@ class NautilusBlock extends MarkdownRenderChild {
     const start = performance.now();
     const duration = 6000;
     const ws = this.settings.workdayStart;
+    const we = this.settings.workdayEnd;
     const tick = (t: number) => {
       const prog = Math.min(1, (t - start) / duration);
-      const sim = Math.floor(ws + prog * (WORKDAY_END - ws));
+      const sim = Math.floor(ws + prog * (we - ws));
       this.simMin = sim;
       this.setPointer?.(sim);
       if (prog < 1) {
@@ -275,6 +436,8 @@ class NautilusBlock extends MarkdownRenderChild {
 export default class NautilusLogPlugin extends Plugin {
   settings: NautilusSettings = { ...DEFAULT_SETTINGS };
   blocks: Set<NautilusBlock> = new Set();
+  /** standalone POMO start (epoch ms); null when not running */
+  pomoStartMs: number | null = null;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -305,6 +468,131 @@ export default class NautilusLogPlugin extends Plugin {
     this.registerInterval(
       window.setInterval(() => this.refreshAll(), 30_000)
     );
+    // 1s ticker for the execution panel's elapsed labels
+    this.registerInterval(
+      window.setInterval(() => {
+        if (!this.settings.executionLayer) return;
+        for (const block of this.blocks) {
+          if (block.containerEl.isConnected) {
+            tickElapsedLabels(block.containerEl, Date.now());
+          }
+        }
+      }, 1_000)
+    );
+
+    this.addCommand({
+      id: "nautilus-clock-out",
+      name: "Clock out current task",
+      callback: () => {
+        const file = this.app.workspace.getActiveFile();
+        if (file) void this.clockOut(file, file.path);
+      },
+    });
+
+    this.addCommand({
+      id: "nautilus-clock-toggle-line",
+      name: "Clock in/out task on current line",
+      editorCallback: (editor, view) => {
+        const file = view.file;
+        if (!file) return;
+        void this.clockToggleLine(file, editor.getCursor().line);
+      },
+    });
+
+    this.addCommand({
+      id: "nautilus-locate-primary-plan",
+      name: "Locate primary plan",
+      callback: () => {
+        const today = moment().format(
+          this.settings.dailyNoteFormat || "YYYY-MM-DD"
+        );
+        const file = this.app.vault
+          .getFiles()
+          .find((f) => f.basename === today && f.extension === "md");
+        if (file) void this.app.workspace.getLeaf().openFile(file);
+      },
+    });
+  }
+
+  /**
+   * The first nautilus block on today's daily note — the execution panel's
+   * primary plan (same rule as the Roam extension).
+   */
+  primaryBlock(): NautilusBlock | null {
+    let best: NautilusBlock | null = null;
+    for (const b of this.blocks) {
+      if (!b.containerEl.isConnected || !b.isDailyBlock()) continue;
+      if (
+        !best ||
+        b.getPath() < best.getPath() ||
+        (b.getPath() === best.getPath() && b.getSectionStart() < best.getSectionStart())
+      ) {
+        best = b;
+      }
+    }
+    return best;
+  }
+
+  /** Clock in a task: closes any running CLOCK at the same instant. */
+  async clockIn(file: TFile | null, path: string, taskLine: number): Promise<void> {
+    const f = file ?? this.app.vault.getAbstractFileByPath(path);
+    if (!(f instanceof TFile)) return;
+    const lines = (await this.app.vault.read(f)).split("\n");
+    const tasks = this.tasksOfFile(lines);
+    const task = tasks.find((t) => t.line === taskLine);
+    if (!task) return;
+    clockInTask(lines, taskLine, task.indent, new Date());
+    this.pomoStartMs = null; // CLOCK always has priority over POMO
+    await this.app.vault.modify(f, lines.join("\n"));
+    void this.saveData({ ...this.settings, pomoStartMs: null });
+  }
+
+  async clockOut(file: TFile | null, path: string): Promise<void> {
+    const f = file ?? this.app.vault.getAbstractFileByPath(path);
+    if (!(f instanceof TFile)) return;
+    const lines = (await this.app.vault.read(f)).split("\n");
+    const open = findOpenClock(lines);
+    if (!open) return;
+    if (closeClockLine(lines, open.clockLine, new Date())) {
+      await this.app.vault.modify(f, lines.join("\n"));
+    }
+  }
+
+  /** Toggle CLOCK for the task on a given editor line, if it is a plan task. */
+  async clockToggleLine(file: TFile, line: number): Promise<void> {
+    const lines = (await this.app.vault.read(file)).split("\n");
+    const tasks = this.tasksOfFile(lines);
+    const task = tasks.find((t) => t.line === line);
+    if (!task) return;
+    const open = findOpenClock(lines);
+    if (open && open.taskLine === line) {
+      closeClockLine(lines, open.clockLine, new Date());
+    } else {
+      clockInTask(lines, line, task.indent, new Date());
+      this.pomoStartMs = null;
+      void this.saveData({ ...this.settings, pomoStartMs: null });
+    }
+    await this.app.vault.modify(file, lines.join("\n"));
+  }
+
+  async togglePomo(): Promise<void> {
+    this.pomoStartMs = this.pomoStartMs ? null : Date.now();
+    await this.saveData({ ...this.settings, pomoStartMs: this.pomoStartMs });
+    this.refreshAll();
+  }
+
+  /** All nautilus-block task lines of a file's content. */
+  private tasksOfFile(lines: string[]): TaskLine[] {
+    const out: TaskLine[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      if (!/^\s*```nautilus\s*$/.test(lines[i])) continue;
+      let end = i + 1;
+      while (end < lines.length && !/^\s*```\s*$/.test(lines[end])) end++;
+      if (end >= lines.length) continue;
+      out.push(...collectTasks(lines, end + 1));
+      i = end;
+    }
+    return out;
   }
 
   refreshAll(path?: string): void {
@@ -349,11 +637,13 @@ export default class NautilusLogPlugin extends Plugin {
   }
 
   async loadSettings(): Promise<void> {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const data = await this.loadData();
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
+    this.pomoStartMs = data?.pomoStartMs ?? null;
   }
 
   async saveSettings(): Promise<void> {
-    await this.saveData(this.settings);
+    await this.saveData({ ...this.settings, pomoStartMs: this.pomoStartMs });
     this.refreshAll();
   }
 }
@@ -372,12 +662,29 @@ class NautilusSettingTab extends PluginSettingTab {
       .setName("Workday start")
       .setDesc("The spiral plans flexible tasks starting from this hour.")
       .addDropdown((d) => {
-        for (let h = 4; h <= 12; h++) {
+        for (let h = 0; h <= 23; h++) {
           d.addOption(String(h * 60), `${h}:00`);
         }
         d.setValue(String(this.plugin.settings.workdayStart)).onChange(
           async (v) => {
             this.plugin.settings.workdayStart = parseInt(v, 10);
+            await this.plugin.saveSettings();
+          }
+        );
+      });
+
+    new Setting(containerEl)
+      .setName("Workday end")
+      .setDesc(
+        "The last hour of the plan. An end at or before the start continues past midnight into the next day."
+      )
+      .addDropdown((d) => {
+        for (let h = 1; h <= 24; h++) {
+          d.addOption(String(h * 60), h === 24 ? "24:00" : `${h}:00`);
+        }
+        d.setValue(String(this.plugin.settings.workdayEnd)).onChange(
+          async (v) => {
+            this.plugin.settings.workdayEnd = parseInt(v, 10);
             await this.plugin.saveSettings();
           }
         );
@@ -447,6 +754,67 @@ class NautilusSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         })
       );
+
+    new Setting(containerEl)
+      .setName("Execution layer")
+      .setDesc(
+        "Enable CLOCK tracking (org-compatible LOGBOOK entries), a standalone POMO, and the Planned vs Actual daily review. Default off."
+      )
+      .addToggle((t) =>
+        t.setValue(this.plugin.settings.executionLayer).onChange(async (v) => {
+          this.plugin.settings.executionLayer = v;
+          await this.plugin.saveSettings();
+          this.display();
+        })
+      );
+
+    if (this.plugin.settings.executionLayer) {
+      new Setting(containerEl)
+        .setName("Pomodoro threshold")
+        .setDesc("Minutes before the POMO signal turns red (0–120).")
+        .addSlider((s) =>
+          s
+            .setLimits(0, 120, 5)
+            .setValue(this.plugin.settings.pomodoroThreshold)
+            .setDynamicTooltip()
+            .onChange(async (v) => {
+              this.plugin.settings.pomodoroThreshold = v;
+              await this.plugin.saveSettings();
+            })
+        );
+
+      new Setting(containerEl)
+        .setName("Recent retention")
+        .setDesc(
+          "Minutes a finished CLOCK stays in the Timing recents list. 0 disables."
+        )
+        .addSlider((s) =>
+          s
+            .setLimits(0, 120, 5)
+            .setValue(this.plugin.settings.recentRetention)
+            .setDynamicTooltip()
+            .onChange(async (v) => {
+              this.plugin.settings.recentRetention = v;
+              await this.plugin.saveSettings();
+            })
+        );
+
+      new Setting(containerEl)
+        .setName("Forgotten timer warning")
+        .setDesc(
+          "Warn when a CLOCK runs longer than this many minutes. Never stops the CLOCK. 0 disables."
+        )
+        .addSlider((s) =>
+          s
+            .setLimits(0, 240, 10)
+            .setValue(this.plugin.settings.forgottenTimerWarning)
+            .setDynamicTooltip()
+            .onChange(async (v) => {
+              this.plugin.settings.forgottenTimerWarning = v;
+              await this.plugin.saveSettings();
+            })
+        );
+    }
 
     new Setting(containerEl)
       .setName("Highlight tag")

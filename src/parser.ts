@@ -58,14 +58,23 @@ export function parseTimeRange(s: string): { range: [number, number] | null; cle
   };
 }
 
-const DURATION_RE = /(\d{1,3})\s*(min|m|h)\b/i;
+/**
+ * Duration token: `45m`, `30min`, `1h`, or compound `1h30m` / `1h30min`.
+ * Bounded by whitespace/start/end so it cannot match inside words.
+ * Ported from the Roam extension's DURATION_TOKEN_RE.
+ */
+const DURATION_TOKEN_RE = /(?:^|\s)(\d+h(?:\d+(?:min|m))?|\d+(?:min|m))(?=\s|$)/i;
 
 export function parseDuration(s: string, settings: NautilusSettings): { duration: number; cleaned: string } {
-  const m = s.match(DURATION_RE);
+  const m = DURATION_TOKEN_RE.exec(s);
   if (m) {
-    const n = parseInt(m[1], 10);
-    const duration = m[2].toLowerCase() === "h" ? n * 60 : n;
-    return { duration, cleaned: s.replace(m[0], "") };
+    const token = m[1];
+    const hours = /(\d+)h/i.exec(token);
+    const minutes = /(\d+)(?:min|m)/i.exec(token);
+    const duration =
+      (hours ? parseInt(hours[1], 10) : 0) * 60 +
+      (minutes ? parseInt(minutes[1], 10) : 0);
+    if (duration > 0) return { duration, cleaned: s.replace(m[0], "") };
   }
   return { duration: settings.defaultDuration, cleaned: s };
 }
@@ -199,8 +208,9 @@ export function parseRowParams(
     description,
     progress: pr.progress,
     duration: Math.round(((100 - pr.progress) / 100) * du.duration),
+    estimate: du.duration,
     line,
-    start: dt.doneAt !== null ? Math.abs(dt.doneAt - du.duration) : tr.range ? tr.range[0] : 0,
+    start: dt.doneAt !== null ? dt.doneAt - du.duration : tr.range ? tr.range[0] : 0,
     end: dt.doneAt !== null ? dt.doneAt : tr.range ? tr.range[1] : 0,
     done: dn.done,
     bgColor: cc.customColor,
@@ -220,6 +230,8 @@ export interface TaskLine {
   line: number;
   text: string;
   checked: boolean | null;
+  /** indentation of the list marker, for child-line ownership */
+  indent: number;
 }
 
 /**
