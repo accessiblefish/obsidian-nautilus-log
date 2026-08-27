@@ -15,7 +15,6 @@
     "esbuild": "0.17.3",
     "obsidian": "latest",
     "tslib": "2.4.0",
-    "typescript": "4.7.4",
-    "moment": "2.30.1"
+    "typescript": "4.7.4"
   }
 }

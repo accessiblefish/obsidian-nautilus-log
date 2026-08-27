@@ -6,7 +6,6 @@ import {
   PluginSettingTab,
   SettingDefinitionItem,
   TFile,
-  moment,
   setIcon,
 } from "obsidian";
 import { DEFAULT_SETTINGS, NautEvent, NautilusSettings, workdayWindow } from "./types";
@@ -30,6 +29,7 @@ import {
   lastClockEndMs,
 } from "./timing";
 import { PanelTab, renderExecPanel, tickElapsedLabels } from "./panel";
+import { formatDate, parseDateStrict } from "./datefmt";
 import { buildNautilusSvg } from "./render";
 
 const LIST_RE = /^\s*(?:[-*+]|\d+\.)\s+/;
@@ -51,11 +51,7 @@ function nowMinutes(): number {
  * Daily Notes plugin exposes no official way to read its date format.
  */
 function isTodayDailyNote(file: TFile, format: string): boolean {
-  try {
-    return file.basename === moment().format(format || "YYYY-MM-DD");
-  } catch {
-    return file.basename === moment().format("YYYY-MM-DD");
-  }
+  return file.basename === formatDate(new Date(), format || "YYYY-MM-DD");
 }
 
 /**
@@ -228,12 +224,11 @@ class NautilusBlock extends MarkdownRenderChild {
     // Pass 2: parse events.
     const pendings: NautEvent[] = [];
     const dones: NautEvent[] = [];
-    const noteMoment = moment(
+    const noteDate = parseDateStrict(
       file.basename,
-      this.plugin.settings.dailyNoteFormat || "YYYY-MM-DD",
-      true
+      this.plugin.settings.dailyNoteFormat || "YYYY-MM-DD"
     );
-    const dayBase = noteMoment.isValid() ? noteMoment.toDate() : new Date();
+    const dayBase = noteDate ?? new Date();
     dayBase.setHours(0, 0, 0, 0);
     const dayBaseMs = dayBase.getTime();
     const winStartMs = dayBaseMs + settings.workdayStart * 60000;
@@ -504,7 +499,8 @@ export default class NautilusLogPlugin extends Plugin {
       id: "nautilus-locate-primary-plan",
       name: "Locate primary plan",
       callback: () => {
-        const today = moment().format(
+        const today = formatDate(
+          new Date(),
           this.settings.dailyNoteFormat || "YYYY-MM-DD"
         );
         const file = this.app.vault

@@ -13,6 +13,7 @@ import {
   parseClockLine,
 } from "../src/timing";
 import { minToAngle, posSweepAngle, angleToRad, iterateRectPlace, spiralProfileIndex, spiralCellInnerIndex } from "../src/geometry";
+import { formatDate, parseDateStrict } from "../src/datefmt";
 
 let failures = 0;
 function eq(name: string, got: unknown, want: unknown) {
@@ -311,3 +312,20 @@ const D = (h: number, m: number) => new Date(2026, 7, 26, h, m, 0, 0);
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURES`);
 process.exit(failures ? 1 : 0);
+
+// ---- datefmt ----
+{
+  const d = new Date(2026, 7, 26, 9, 5, 3);
+  eq("format YYYY-MM-DD", formatDate(d, "YYYY-MM-DD"), "2026-08-26");
+  eq("format with day name", formatDate(d, "YYYY-MM-DD ddd"), "2026-08-26 Wed");
+  eq("format M D no pad", formatDate(d, "M/D"), "8/26");
+  eq("format month name", formatDate(d, "MMM D, YYYY"), "Aug 26, 2026");
+  eq("format time", formatDate(d, "HH:mm:ss"), "09:05:03");
+  const p1 = parseDateStrict("2026-08-26", "YYYY-MM-DD")!;
+  eq("parse roundtrip", [p1.getFullYear(), p1.getMonth() + 1, p1.getDate()], [2026, 8, 26]);
+  eq("parse with weekday", parseDateStrict("2026-08-26 Wed", "YYYY-MM-DD ddd") !== null, true);
+  eq("reject month 13", parseDateStrict("2026-13-01", "YYYY-MM-DD"), null);
+  eq("reject feb 30", parseDateStrict("2026-02-30", "YYYY-MM-DD"), null);
+  eq("reject partial", parseDateStrict("2026-08-26 notes", "YYYY-MM-DD"), null);
+  eq("reject wrong format", parseDateStrict("2026/08/26", "YYYY-MM-DD"), null);
+}
