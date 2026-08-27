@@ -328,4 +328,5 @@ process.exit(failures ? 1 : 0);
   eq("reject feb 30", parseDateStrict("2026-02-30", "YYYY-MM-DD"), null);
   eq("reject partial", parseDateStrict("2026-08-26 notes", "YYYY-MM-DD"), null);
   eq("reject wrong format", parseDateStrict("2026/08/26", "YYYY-MM-DD"), null);
+  eq("parse with HH mm tokens", parseDateStrict("2026-08-26 14:30", "YYYY-MM-DD HH:mm") !== null, true);
 }

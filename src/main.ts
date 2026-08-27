@@ -2,6 +2,7 @@ import {
   App,
   MarkdownPostProcessorContext,
   MarkdownRenderChild,
+  Notice,
   Plugin,
   PluginSettingTab,
   SettingDefinitionItem,
@@ -503,10 +504,15 @@ export default class NautilusLogPlugin extends Plugin {
           new Date(),
           this.settings.dailyNoteFormat || "YYYY-MM-DD"
         );
-        const file = this.app.vault
-          .getFiles()
-          .find((f) => f.basename === today && f.extension === "md");
-        if (file) void this.app.workspace.getLeaf().openFile(file);
+        const folder = this.settings.dailyNotesFolder.replace(/^\/|\/$/g, "");
+        const path = folder ? `${folder}/${today}.md` : `${today}.md`;
+        // direct path lookup — no vault-wide enumeration
+        const file = this.app.vault.getAbstractFileByPath(path);
+        if (file instanceof TFile) {
+          void this.app.workspace.getLeaf().openFile(file);
+        } else {
+          new Notice(`Nautilus Log: daily note not found at ${path}`);
+        }
       },
     });
   }
@@ -732,6 +738,15 @@ class NautilusSettingTab extends PluginSettingTab {
           type: "text",
           key: "dailyNoteFormat",
           placeholder: "YYYY-MM-DD",
+        },
+      },
+      {
+        name: "Daily notes folder",
+        desc: "Folder containing your daily notes (e.g. Daily). Used by the Locate primary plan command. Empty means the vault root.",
+        control: {
+          type: "text",
+          key: "dailyNotesFolder",
+          placeholder: "Daily",
         },
       },
       {

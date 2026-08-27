@@ -67,9 +67,9 @@ const PARSE_TOKENS: [string, string, Role][] = [
   ["D", "(\\d{1,2})", "day"],
   ["dddd", `(${DAYS_LONG.join("|")})`, "ignore"],
   ["ddd", `(${DAYS_SHORT.join("|")})`, "ignore"],
-  ["HH", "(\d{2})", "ignore"],
-  ["mm", "(\d{2})", "ignore"],
-  ["ss", "(\d{2})", "ignore"],
+  ["HH", "(\\d{2})", "ignore"],
+  ["mm", "(\\d{2})", "ignore"],
+  ["ss", "(\\d{2})", "ignore"],
 ];
 
 function escapeRe(s: string): string {

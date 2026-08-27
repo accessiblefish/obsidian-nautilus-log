@@ -15,6 +15,8 @@ export interface NautilusSettings {
   showPlaybackButton: boolean;
   /** moment.js format matching daily note filenames, e.g. "YYYY-MM-DD" */
   dailyNoteFormat: string;
+  /** folder containing daily notes; empty = vault root */
+  dailyNotesFolder: string;
   /** Execution Layer: CLOCK tracking, POMO and daily review (default off) */
   executionLayer: boolean;
   /** POMO live signal threshold in minutes */
@@ -40,6 +42,7 @@ export const DEFAULT_SETTINGS: NautilusSettings = {
   customColor: "rgba(255,0,0,0.5)",
   showPlaybackButton: true,
   dailyNoteFormat: "YYYY-MM-DD",
+  dailyNotesFolder: "",
   executionLayer: false,
   pomodoroThreshold: 45,
   recentRetention: 45,
