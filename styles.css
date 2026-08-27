@@ -291,6 +291,15 @@
   margin-top: 4px;
 }
 
+/* subtle warning line inside a setting description */
+.nautilus-setting-warn {
+  margin-top: 4px;
+  padding-left: 8px;
+  border-left: 2px solid var(--background-modifier-border);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
 @keyframes nautilusSlicePopIn {
   0% {
     opacity: 0;

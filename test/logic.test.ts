@@ -36,7 +36,7 @@ const e2 = parseRowParams("Read a book 30m", false, 1, S)!;
 eq("todo duration", [e2.todo, e2.duration, e2.description], [true, 30, "Read a book"]);
 
 const e3 = parseRowParams("Write report", false, 2, S)!;
-eq("default duration", e3.duration, 15);
+eq("default duration", e3.duration, 30);
 
 const e4 = parseRowParams("9-11am Standup", false, 3, S)!;
 eq("am range", [e4.start, e4.end], [540, 660]);
@@ -48,7 +48,7 @@ const e6 = parseRowParams("Call 45m d50%", false, 5, S)!;
 eq("progress scales duration", [e6.progress, e6.duration], [50, 23]);
 
 const e7 = parseRowParams("Done thing d13:20", true, 6, S)!;
-eq("done todo with timestamp", [e7.done, e7.doneAt, e7.start, e7.end], [true, 800, 785, 800]);
+eq("done todo with timestamp", [e7.done, e7.doneAt, e7.start, e7.end], [true, 800, 770, 800]);
 
 const e8 = parseRowParams("Workout 1h", false, 7, S)!;
 eq("hour duration", e8.duration, 60);

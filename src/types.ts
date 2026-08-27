@@ -34,9 +34,9 @@ export interface NautilusSettings {
 }
 
 export const DEFAULT_SETTINGS: NautilusSettings = {
-  workdayStart: 480,
+  workdayStart: 420,
   workdayEnd: 1320,
-  defaultDuration: 15,
+  defaultDuration: 30,
   legendLenLimit: 22,
   customColorTag: "",
   customColor: "rgba(255,0,0,0.5)",
@@ -44,9 +44,9 @@ export const DEFAULT_SETTINGS: NautilusSettings = {
   dailyNoteFormat: "YYYY-MM-DD",
   dailyNotesFolder: "",
   executionLayer: false,
-  pomodoroThreshold: 45,
+  pomodoroThreshold: 25,
   recentRetention: 45,
-  forgottenTimerWarning: 120,
+  forgottenTimerWarning: 30,
   stampOnCheck: true,
 };
 

@@ -641,6 +641,20 @@ export default class NautilusLogPlugin extends Plugin {
 
   async loadSettings(): Promise<void> {
     const data = (await this.loadData()) as PersistedData | null;
+    // migrate untouched legacy defaults to the current defaults
+    if (data) {
+      const legacy: [keyof NautilusSettings, number, number][] = [
+        ["workdayStart", 480, 420],
+        ["defaultDuration", 15, 30],
+        ["pomodoroThreshold", 45, 25],
+        ["forgottenTimerWarning", 120, 30],
+      ];
+      for (const [key, oldVal, newVal] of legacy) {
+        if ((data as Record<string, unknown>)[key] === oldVal) {
+          (data as Record<string, unknown>)[key] = newVal;
+        }
+      }
+    }
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
     this.pomoStartMs = data?.pomoStartMs ?? null;
   }
@@ -649,6 +663,18 @@ export default class NautilusLogPlugin extends Plugin {
     await this.saveData({ ...this.settings, pomoStartMs: this.pomoStartMs });
     this.refreshAll();
   }
+}
+
+/** Description with an optional subtle warning line below. */
+function descWithWarn(desc: string, warn?: string): string | DocumentFragment {
+  if (!warn) return desc;
+  const frag = document.createDocumentFragment();
+  frag.appendText(desc);
+  const w = document.createElement("div");
+  w.className = "nautilus-setting-warn";
+  w.textContent = warn;
+  frag.appendChild(w);
+  return frag;
 }
 
 class NautilusSettingTab extends PluginSettingTab {
@@ -686,7 +712,7 @@ class NautilusSettingTab extends PluginSettingTab {
     return [
       {
         name: "Workday start",
-        desc: "The spiral plans flexible tasks starting from this hour.",
+        desc: "The day plan starts at this hour. Default: 7:00.",
         control: {
           type: "dropdown",
           key: "workdayStart",
@@ -695,7 +721,7 @@ class NautilusSettingTab extends PluginSettingTab {
       },
       {
         name: "Workday end",
-        desc: "The last hour of the plan. An end at or before the start continues past midnight into the next day.",
+        desc: "The day plan ends at this hour. An end at or before the start runs into the next day. Default: 22:00.",
         control: {
           type: "dropdown",
           key: "workdayEnd",
@@ -704,7 +730,7 @@ class NautilusSettingTab extends PluginSettingTab {
       },
       {
         name: "Default task duration",
-        desc: "Minutes assigned to flexible tasks without an explicit duration (5-60).",
+        desc: "Planned length for tasks without a written duration. Default: 30 min.",
         control: {
           type: "slider",
           key: "defaultDuration",
@@ -715,8 +741,8 @@ class NautilusSettingTab extends PluginSettingTab {
         },
       },
       {
-        name: "Legend length limit",
-        desc: "Maximum characters shown for each label on the spiral (15-30).",
+        name: "Label length limit",
+        desc: "Maximum characters per task name on the chart. One Chinese character counts as two. Default: 22.",
         control: {
           type: "slider",
           key: "legendLenLimit",
@@ -728,12 +754,15 @@ class NautilusSettingTab extends PluginSettingTab {
       },
       {
         name: "Show playback button",
-        desc: "Show the hyper-lapse play button that replays the whole day.",
+        desc: "Show a button that replays the day as an animation. Default: on.",
         control: { type: "toggle", key: "showPlaybackButton" },
       },
       {
-        name: "Daily note date format",
-        desc: "moment.js format matching your daily note filenames (e.g. YYYY-MM-DD). Charts in daily notes plan from the current time; other notes plan from the workday start.",
+        name: "Daily note date name",
+        desc: descWithWarn(
+          "The date format in daily note filenames (e.g. YYYY-MM-DD). Default: YYYY-MM-DD.",
+          "A wrong format means the plugin cannot tell which note is today."
+        ),
         control: {
           type: "text",
           key: "dailyNoteFormat",
@@ -742,7 +771,7 @@ class NautilusSettingTab extends PluginSettingTab {
       },
       {
         name: "Daily notes folder",
-        desc: "Folder containing your daily notes (e.g. Daily). Used by the Locate primary plan command. Empty means the vault root.",
+        desc: 'The folder that stores daily notes (e.g. Daily). Used by the "Locate primary plan" command. Default: empty (vault root).',
         control: {
           type: "text",
           key: "dailyNotesFolder",
@@ -750,18 +779,21 @@ class NautilusSettingTab extends PluginSettingTab {
         },
       },
       {
-        name: "Stamp completion time",
-        desc: "When you check off a task, append a dHH:MM timestamp so it stays visible on the spiral where it was completed.",
+        name: "Record completion time",
+        desc: descWithWarn(
+          "Checking off a task adds a completion time (e.g. d14:31). Unchecking removes the timestamp. Default: on.",
+          "Without a timestamp, a finished task cannot be shown on the chart."
+        ),
         control: { type: "toggle", key: "stampOnCheck" },
       },
       {
         name: "Highlight tag",
-        desc: "Tasks containing this tag are drawn with the custom color below (e.g. #focus). Empty disables.",
+        desc: "Tasks with the highlight tag use the highlight color (e.g. #focus). Default: empty (off).",
         control: { type: "text", key: "customColorTag", placeholder: "#focus" },
       },
       {
         name: "Highlight color",
-        desc: "rgba(...) color for tasks carrying the highlight tag.",
+        desc: "The color for tasks with the highlight tag. Default: rgba(255,0,0,0.5).",
         control: {
           type: "text",
           key: "customColor",
@@ -774,12 +806,12 @@ class NautilusSettingTab extends PluginSettingTab {
         items: [
           {
             name: "Execution layer",
-            desc: "Enable CLOCK tracking (org-compatible LOGBOOK entries), a standalone POMO, and the Planned vs Actual daily review. Default off.",
+            desc: "CLOCK records, a POMO timer, and a daily review above the chart. Default: off.",
             control: { type: "toggle", key: "executionLayer" },
           },
           {
-            name: "Pomodoro threshold",
-            desc: "Minutes before the POMO signal turns red (0-120).",
+            name: "Pomodoro time",
+            desc: "Minutes before the POMO timer turns red. Default: 25 min.",
             visible: execVisible,
             control: {
               type: "slider",
@@ -791,8 +823,8 @@ class NautilusSettingTab extends PluginSettingTab {
             },
           },
           {
-            name: "Recent retention",
-            desc: "Minutes a finished CLOCK stays in the Timing recents list. 0 disables.",
+            name: "Show finished tasks for",
+            desc: "Minutes a stopped task stays in the Timing tab. 0 hides stopped tasks. Default: 45 min.",
             visible: execVisible,
             control: {
               type: "slider",
@@ -805,7 +837,10 @@ class NautilusSettingTab extends PluginSettingTab {
           },
           {
             name: "Forgotten timer warning",
-            desc: "Warn when a CLOCK runs longer than this many minutes. Never stops the CLOCK. 0 disables.",
+            desc: descWithWarn(
+              "Minutes a CLOCK may run before the elapsed time turns red. 0 disables. Default: 30 min.",
+              "The warning never stops the CLOCK."
+            ),
             visible: execVisible,
             control: {
               type: "slider",
