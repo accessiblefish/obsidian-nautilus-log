@@ -1,6 +1,6 @@
 {
   "name": "obsidian-nautilus-log",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Nautilus spiral day planner for Obsidian (port of the Roam Research Nautilus extension)",
   "main": "main.js",
   "scripts": {
