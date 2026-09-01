@@ -70,6 +70,10 @@ export interface NautEvent {
   todo: boolean;
   freetime: boolean;
   startAfter: number;
+  /** arc drawn from a real CLOCK interval (dot pattern, actual position) */
+  actual?: boolean;
+  /** suppress the legend entry (actual arcs of pending tasks share the planned slice's legend) */
+  noLegend?: boolean;
 }
 
 /**

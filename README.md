@@ -12,7 +12,7 @@ Inspired by YNAB's core philosophy "Give every dollar a job", this plugin applie
 - A plan that fits time. See Planned demand, Available time, fixed Events, remaining capacity, and work that cannot fit today.
 - Flexible scheduling without a black box. Events keep their time; unfinished tasks move forward in list order.
 - A day shaped around you. Start at any whole hour and continue past midnight when the plan belongs to a late or overnight schedule.
-- Low-friction execution. Work from estimates alone, run a standalone POMO, or optionally track tasks with compatible LOGBOOK:: / CLOCK: records.
+- Low-friction execution. Work from estimates alone, run a standalone POMO, or optionally track tasks with CLOCK: records (legacy LOGBOOK:: entries still read).
 - A useful daily review. Compare Planned and Actual time without leaving your markdown notes.
 
 ## Obsidian-Native Enhancements

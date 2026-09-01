@@ -24,19 +24,20 @@ tabs: **Timing**, **Plan**, **Review**.
 
 ## CLOCK — record actual time
 
-Clocking in writes an org-mode-compatible entry into your note, under the task:
+Clocking in writes an entry directly under the task in your note:
 
 ```markdown
 - [ ] Write weekly report 45m
-  - LOGBOOK::
-    - CLOCK: [2026-08-26 Wed 14:00]
+  - CLOCK: [2026-08-26 Wed 14:00]
 ```
 
 Clocking out (or clocking into another task) closes the entry:
 
 ```markdown
-    - CLOCK: [2026-08-26 Wed 14:00]--[2026-08-26 Wed 14:18] => 0:18
+  - CLOCK: [2026-08-26 Wed 14:00]--[2026-08-26 Wed 14:18] => 0:18
 ```
+
+Each closed CLOCK draws its own arc (dot pattern) at its real position on the spiral; a running CLOCK draws a live arc reaching to now. On the chart, CLOCK records win over the task's planned time and completion stamp (see `docs/adr/0001`). Legacy `LOGBOOK::`-wrapped entries are still read.
 
 Rules:
 
@@ -59,13 +60,17 @@ Ways to clock in/out:
 
 ### How CLOCK data changes the spiral
 
-A finished task is drawn on the spiral **where it actually happened**:
+A task with CLOCK records is drawn on the spiral **where it actually happened**:
 
-- Its duration prefers the total of today's CLOCK sessions over the estimate.
-- Its position anchors at the `dHH:MM` completion stamp, or — without one —
-  at the end of the last CLOCK session.
-- Without either anchor, no history is invented: the task simply doesn't
-  appear on the spiral.
+- Each closed CLOCK draws its own arc (dot pattern) at its real time range —
+  several sessions mean several arcs. A running CLOCK draws a live arc
+  reaching to now.
+- Actual arcs win over the task's planned time and its `dHH:MM` completion
+  stamp; the gap between the last CLOCK end and the stamp is not counted.
+- Checking a task done closes its running CLOCK at that moment.
+- Only without any CLOCK does a finished task fall back to the old behavior:
+  an estimate-sized slice anchored at the `dHH:MM` stamp. Without a stamp,
+  no history is invented — the task simply doesn't appear.
 
 ## POMO — standalone focus timer
 

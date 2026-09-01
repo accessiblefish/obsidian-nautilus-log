@@ -27,7 +27,7 @@ const MEETING_PALETTE = [
   "rgba(252,194,0,0.4)",
   "rgba(252,194,0,0.3)",
 ];
-const TODO_PALETTE = [
+export const TODO_PALETTE = [
   "rgba(4,100,132,0.3)",
   "rgba(8,153,200,0.3)",
   "rgba(47,186,232,0.3)",
@@ -90,6 +90,8 @@ export interface RenderParams {
   planFromTime: number;
   showDone: boolean;
   playing: boolean;
+  /** actual CLOCK arcs, pre-positioned (minutes from midnight, window-aligned) */
+  actuals: NautEvent[];
   onProgressClick?: (ev: NautEvent) => void;
 }
 
@@ -338,7 +340,10 @@ function sliceParams(
 ): { bg: string | null; done: boolean; clickToProgress: boolean } {
   const expired = event.meeting && p.isDaily && p.nowMin >= event.end;
   let bg: string | null = null;
-  if (event.meeting) {
+  if (event.actual) {
+    // actual CLOCK arc: own hue, dot pattern, never clickable/grayed
+    bg = event.bgColor ?? TODO_PALETTE[index % TODO_PALETTE.length];
+  } else if (event.meeting) {
     bg = expired
       ? GRAY
       : event.bgColor ?? MEETING_PALETTE[index % MEETING_PALETTE.length];
@@ -351,14 +356,14 @@ function sliceParams(
   return {
     bg,
     done: event.done,
-    clickToProgress: p.isDaily && event.todo,
+    clickToProgress: !event.actual && p.isDaily && event.todo,
   };
 }
 
 function eventSlices(
   event: NautEvent,
   index: number,
-  legendRect: Rect,
+  legendRect: Rect | null,
   ctx: Ctx
 ): SVGGElement {
   const { p } = ctx;
@@ -387,7 +392,7 @@ function eventSlices(
           legendRect: idx === 0 ? legendRect : null,
           done,
           fontWeight: "bold",
-          nonZeroProgress: event.progress > 0,
+          nonZeroProgress: event.progress > 0 || event.actual === true,
           clickToProgress,
           onClick:
             clickToProgress && p.onProgressClick
@@ -412,6 +417,11 @@ function eventsToSlices(
   let i = 0;
   for (const event of events) {
     if (event.freetime) continue;
+    if (event.noLegend) {
+      g.appendChild(eventSlices(event, i, null, ctx));
+      i++;
+      continue;
+    }
     const midRad = posSweepAngleMid(
       angleToRad(minToAngle(event.start)),
       angleToRad(minToAngle(event.end))
@@ -461,7 +471,7 @@ function eventsToNewDimensions(
   }
   const rects: Rect[] = [];
   for (const event of events) {
-    if (event.freetime) continue;
+    if (event.freetime || event.noLegend) continue;
     const midRad = posSweepAngleMid(
       angleToRad(minToAngle(event.start)),
       angleToRad(minToAngle(event.end))
@@ -590,7 +600,13 @@ export function buildNautilusSvg(
     p.settings.workdayEnd,
     p.planFromTime
   );
-  const allForDim = p.showDone ? [...scheduled, ...dones] : scheduled;
+  // actual arcs of done tasks follow the showDone toggle; pending ones stay
+  const visibleActuals = p.actuals.filter((a) => p.showDone || !a.done);
+  const allForDim = [
+    ...scheduled,
+    ...(p.showDone ? dones : []),
+    ...visibleActuals,
+  ];
 
   const baseCtx = { p, scaler, fontSize, innerRadius, isMobile };
   const [cx, width, cy, height] = eventsToNewDimensions(
@@ -601,7 +617,10 @@ export function buildNautilusSvg(
   const ctx: Ctx = { ...baseCtx, center: { cx, cy } };
 
   const [slicesG, rects] = eventsToSlices(scheduled, ctx, []);
-  const doneG = p.showDone ? eventsToSlices(dones, ctx, rects)[0] : null;
+  const [doneG, rects2] = p.showDone
+    ? eventsToSlices(dones, ctx, rects)
+    : [null, rects];
+  const actualG = eventsToSlices(visibleActuals, ctx, rects2)[0];
 
   const svg = svgEl("svg", {
     viewBox: `0 0 ${width} ${height}`,
@@ -628,6 +647,7 @@ export function buildNautilusSvg(
   svg.appendChild(renderBlueprint(ctx));
   if (doneG) svg.appendChild(doneG);
   svg.appendChild(slicesG);
+  svg.appendChild(actualG);
   let pointer: SVGLineElement | null = null;
   if (p.isDaily || p.playing) {
     pointer = renderNowPointer(ctx);

@@ -6,6 +6,7 @@ import {
   buildDailyReview,
   clockEntriesForTask,
   clockInTask,
+  closeClockIfOwnerDone,
   closeClockLine,
   findOpenClock,
   formatClockLine,
@@ -242,28 +243,53 @@ const D = (h: number, m: number) => new Date(2026, 7, 26, h, m, 0, 0);
   eq("parse open clock running", parseClockLine(`  - ${open}`, 3)!.running, true);
 }
 {
-  // clock-in: inserts LOGBOOK + open CLOCK; switching closes the previous
+  // clock-in: inserts an open CLOCK as a direct child (no LOGBOOK, ADR-0001);
+  // switching closes the previous
   const lines = ["- [ ] Task A 30m", "- [ ] Task B 45m"];
   clockInTask(lines, 0, 0, D(10, 0));
-  eq("clock-in inserts logbook", lines, [
+  eq("clock-in inserts direct child clock", lines, [
     "- [ ] Task A 30m",
-    "  - LOGBOOK::",
-    "    - CLOCK: [2026-08-26 Wed 10:00]",
+    "  - CLOCK: [2026-08-26 Wed 10:00]",
     "- [ ] Task B 45m",
   ]);
-  clockInTask(lines, 3, 0, D(10, 30));
-  eq("switch closes previous clock", lines[2], "    - CLOCK: [2026-08-26 Wed 10:00]--[2026-08-26 Wed 10:30] => 0:30");
-  eq("new open clock under B", lines[5], "    - CLOCK: [2026-08-26 Wed 10:30]");
+  clockInTask(lines, 2, 0, D(10, 30));
+  eq("switch closes previous clock", lines[1], "  - CLOCK: [2026-08-26 Wed 10:00]--[2026-08-26 Wed 10:30] => 0:30");
+  eq("new open clock under B", lines[3], "  - CLOCK: [2026-08-26 Wed 10:30]");
   const open = findOpenClock(lines)!;
-  eq("open clock located", [open.clockLine, open.taskLine], [5, 3]);
+  eq("open clock located", [open.clockLine, open.taskLine], [3, 2]);
   closeClockLine(lines, open.clockLine, D(11, 0));
-  eq("clock out", lines[5], "    - CLOCK: [2026-08-26 Wed 10:30]--[2026-08-26 Wed 11:00] => 0:30");
+  eq("clock out", lines[3], "  - CLOCK: [2026-08-26 Wed 10:30]--[2026-08-26 Wed 11:00] => 0:30");
   eq("no open clock left", findOpenClock(lines), null);
   const entries = clockEntriesForTask(lines, 0, 0);
   eq("entries of A", entries.length, 1);
   const day0 = new Date(2026, 7, 26, 0, 0, 0, 0).getTime();
   eq("actual minutes in window", actualMinutesInWindow(entries, day0, day0 + 1440 * 60000, D(12, 0).getTime()), 30);
   eq("last clock end", lastClockEndMs(entries), D(10, 30).getTime());
+}
+{
+  // legacy LOGBOOK-wrapped entries still parse (read compatibility)
+  const lines = [
+    "- [x] Legacy 30m",
+    "  - LOGBOOK::",
+    "    - CLOCK: [2026-08-26 Wed 09:00]--[2026-08-26 Wed 09:40] => 0:40",
+  ];
+  const entries = clockEntriesForTask(lines, 0, 0);
+  eq("legacy logbook entries parsed", entries.map((e) => e.minutes), [40]);
+  // second clock-in appends after existing CLOCKs, without a drawer
+  clockInTask(lines, 0, 0, D(10, 0));
+  eq("clock-in after legacy entries", lines, [
+    "- [x] Legacy 30m",
+    "  - LOGBOOK::",
+    "    - CLOCK: [2026-08-26 Wed 09:00]--[2026-08-26 Wed 09:40] => 0:40",
+    "  - CLOCK: [2026-08-26 Wed 10:00]",
+  ]);
+  const open = findOpenClock(lines)!;
+  eq("open clock owned by legacy task", open.taskLine, 0);
+  // checking the owner task closes the running clock
+  eq("close on check", closeClockIfOwnerDone(lines, new Set([0]), D(10, 25)), true);
+  eq("clock closed at check time", lines[3], "  - CLOCK: [2026-08-26 Wed 10:00]--[2026-08-26 Wed 10:25] => 0:25");
+  eq("no open clock after check", findOpenClock(lines), null);
+  eq("no-op when owner not done", closeClockIfOwnerDone(lines, new Set(), D(10, 30)), false);
 }
 {
   // review states

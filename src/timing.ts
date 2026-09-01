@@ -1,9 +1,11 @@
 /**
- * CLOCK / LOGBOOK execution layer — pure logic, ported from the Roam
- * extension's timing-core.js. Org-compatible line format:
+ * CLOCK execution layer — pure logic, originally ported from the Roam
+ * extension's timing-core.js. New entries are written as a direct child
+ * of the task (no LOGBOOK drawer, see docs/adr/0001):
  *
- *   - LOGBOOK::
- *     - CLOCK: [2026-08-22 Sat 10:00]--[2026-08-22 Sat 10:18] => 0:18
+ *   - CLOCK: [2026-08-22 Sat 10:00]--[2026-08-22 Sat 10:18] => 0:18
+ *
+ * Legacy roam/org drawers (`LOGBOOK::` / `:LOGBOOK:`) are still parsed.
  */
 
 export interface ClockInterval {
@@ -182,9 +184,10 @@ export function closeClockLine(lines: string[], clockLine: number, now: Date): b
 }
 
 /**
- * Clock in a task: closes any running CLOCK in the file at the same instant,
- * ensures a LOGBOOK:: child under the task and inserts a fresh open CLOCK
- * entry. Mutates `lines` (with insertions) so callers persist in ONE write.
+ * Clock in a task: closes any running CLOCK in the file at the same
+ * instant and inserts a fresh open CLOCK as a direct child of the task
+ * (after any existing CLOCK entries). Mutates `lines` (with insertions)
+ * so callers persist in ONE write.
  */
 export function clockInTask(
   lines: string[],
@@ -196,30 +199,32 @@ export function clockInTask(
   if (open) closeClockLine(lines, open.clockLine, now);
 
   const pad1 = " ".repeat(taskIndent + 2);
-  const pad2 = " ".repeat(taskIndent + 4);
   const [from, to] = childRange(lines, taskLine, taskIndent);
 
-  let logbookLine = -1;
   let lastClockLine = -1;
   for (let i = from; i < to; i++) {
-    if (LOGBOOK_LINE_RE.test(lines[i])) logbookLine = i;
     if (parseClockLine(lines[i], i)) lastClockLine = i;
   }
 
-  if (logbookLine === -1) {
-    lines.splice(
-      taskLine + 1,
-      0,
-      `${pad1}- LOGBOOK::`,
-      `${pad2}- ${formatClockLine(now)}`
-    );
-  } else {
-    lines.splice(
-      lastClockLine !== -1 ? lastClockLine + 1 : logbookLine + 1,
-      0,
-      `${pad2}- ${formatClockLine(now)}`
-    );
-  }
+  lines.splice(
+    lastClockLine !== -1 ? lastClockLine + 1 : taskLine + 1,
+    0,
+    `${pad1}- ${formatClockLine(now)}`
+  );
+}
+
+/**
+ * Done means work stopped: when the task owning the running CLOCK is
+ * checked, close the CLOCK at that moment. Returns true on a change.
+ */
+export function closeClockIfOwnerDone(
+  lines: string[],
+  doneTaskLines: ReadonlySet<number>,
+  now: Date
+): boolean {
+  const open = findOpenClock(lines);
+  if (!open || !doneTaskLines.has(open.taskLine)) return false;
+  return closeClockLine(lines, open.clockLine, now);
 }
 
 /** Actual minutes within the plan window; a running entry counts until now. */

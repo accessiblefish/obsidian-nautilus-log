@@ -21,17 +21,16 @@ import {
   ClockInterval,
   OpenClock,
   ReviewTask,
-  actualMinutesInWindow,
   buildDailyReview,
   clockEntriesForTask,
   clockInTask,
+  closeClockIfOwnerDone,
   closeClockLine,
   findOpenClock,
-  lastClockEndMs,
 } from "./timing";
 import { PanelTab, renderExecPanel, tickElapsedLabels } from "./panel";
 import { formatDate, parseDateStrict } from "./datefmt";
-import { buildNautilusSvg } from "./render";
+import { buildNautilusSvg, TODO_PALETTE } from "./render";
 
 const LIST_RE = /^\s*(?:[-*+]|\d+\.)\s+/;
 const CHECK_RE = /^\s*[-*+]\s+\[([ xX])\]\s+/;
@@ -136,6 +135,8 @@ class NautilusBlock extends MarkdownRenderChild {
   private settings: NautilusSettings;
   private pendings: NautEvent[] = [];
   private dones: NautEvent[] = [];
+  /** actual CLOCK arcs, positioned by real intervals (see docs/adr/0001) */
+  private actuals: NautEvent[] = [];
   private isDaily = false;
   private pageTitle = "";
   private file: TFile | null = null;
@@ -150,6 +151,8 @@ class NautilusBlock extends MarkdownRenderChild {
   private reviewTasks: ReviewTask[] = [];
   private panelTab: PanelTab = "timing";
   private windowMs: [number, number] = [0, 0];
+  /** re-render timer while an open CLOCK runs on today's daily note */
+  private liveTimer: number | null = null;
 
   constructor(
     private plugin: NautilusLogPlugin,
@@ -182,6 +185,7 @@ class NautilusBlock extends MarkdownRenderChild {
   onunload(): void {
     this.plugin.blocks.delete(this);
     if (this.rafId !== null) window.cancelAnimationFrame(this.rafId);
+    if (this.liveTimer !== null) window.clearTimeout(this.liveTimer);
   }
 
   async refresh(): Promise<void> {
@@ -213,8 +217,14 @@ class NautilusBlock extends MarkdownRenderChild {
     const tasks = collectTasks(lines, section.lineEnd + 1);
 
     // Pass 1: fix timestamps (normally already handled by the plugin-level
-    // vault "modify" handler; this is a fallback, e.g. after external edits)
+    // vault "modify" handler; this is a fallback, e.g. after external edits).
+    // Checking a task done also closes its running CLOCK (docs/adr/0001).
+    const doneTaskLines = new Set(
+      tasks.filter((t) => t.checked === true).map((t) => t.line)
+    );
+    const clockClosed = closeClockIfOwnerDone(lines, doneTaskLines, new Date());
     if (
+      clockClosed ||
       fixTaskLines(lines, tasks, settings, nowMinutes())
     ) {
       await this.plugin.app.vault.modify(file, lines.join("\n"));
@@ -225,6 +235,7 @@ class NautilusBlock extends MarkdownRenderChild {
     // Pass 2: parse events.
     const pendings: NautEvent[] = [];
     const dones: NautEvent[] = [];
+    const actuals: NautEvent[] = [];
     const noteDate = parseDateStrict(
       file.basename,
       this.plugin.settings.dailyNoteFormat || "YYYY-MM-DD"
@@ -235,10 +246,38 @@ class NautilusBlock extends MarkdownRenderChild {
     const winStartMs = dayBaseMs + settings.workdayStart * 60000;
     const winEndMs = dayBaseMs + settings.workdayEnd * 60000;
     this.windowMs = [winStartMs, winEndMs];
+    const [winStart, winEnd] = workdayWindow(settings);
+    const nowMs = Date.now();
     this.clockInfo.clear();
     this.planTasks = [];
     this.reviewTasks = [];
     const descByLine = new Map<number, string>();
+    let todoHueIdx = 0;
+    // One arc per CLOCK interval, clipped to the workday window. A running
+    // entry reaches to now. `withLegend` only for the first arc of a done
+    // task (pending tasks already carry a legend on their planned slice).
+    const toArc = (
+      ev: NautEvent,
+      e: ClockInterval,
+      withLegend: boolean
+    ): NautEvent | null => {
+      const s = (e.start.getTime() - dayBaseMs) / 60000;
+      const en = ((e.end?.getTime() ?? nowMs) - dayBaseMs) / 60000;
+      const [a1, a2] = alignIntervalToWindow(s, en, winStart, winEnd);
+      const cs = Math.max(a1, winStart);
+      const ce = Math.min(a2, winEnd);
+      if (ce <= cs) return null;
+      return {
+        ...ev,
+        start: cs,
+        end: ce,
+        duration: ce - cs,
+        actual: true,
+        noLegend: !withLegend,
+        doneAt: null,
+        progress: 0,
+      };
+    };
     for (const t of tasks) {
       const ev = parseRowParams(t.text, t.checked === true, t.line, settings);
       if (!ev) continue;
@@ -254,36 +293,46 @@ class NautilusBlock extends MarkdownRenderChild {
         };
         this.reviewTasks.push(rt);
         if (!ev.done) this.planTasks.push(rt);
+        ev.bgColor =
+          ev.bgColor ?? TODO_PALETTE[todoHueIdx % TODO_PALETTE.length];
+        todoHueIdx++;
       }
       if (ev.meeting && ev.done) {
         dones.push(ev);
         continue;
       }
       if (ev.done && ev.todo) {
-        // historical slice: prefer total valid Actual time; anchor at the
-        // explicit dHH:MM stamp, else at the last CLOCK end. Without either,
-        // no history is invented (the task simply does not appear).
-        const actual = actualMinutesInWindow(
-          entries,
-          winStartMs,
-          winEndMs,
-          Date.now()
-        );
-        const lastEnd = lastClockEndMs(entries);
-        let endMin: number | null = ev.doneAt;
-        if (endMin == null && actual > 0 && lastEnd != null) {
-          endMin = Math.round((lastEnd - dayBaseMs) / 60000);
+        // Actual-first (docs/adr/0001): any CLOCK record wins — one arc per
+        // interval, ignoring planned time and the done stamp. Only without
+        // any clock does the done stamp anchor an estimate-sized slice.
+        if (entries.length > 0) {
+          let first = true;
+          for (const e of entries) {
+            const arc = toArc(ev, e, first);
+            if (arc) {
+              actuals.push(arc);
+              first = false;
+            }
+          }
+          continue;
         }
-        if (endMin == null) continue;
-        const duration = actual > 0 ? actual : ev.estimate;
+        if (ev.doneAt == null) continue;
         const [s2, e2] = alignIntervalToWindow(
-          endMin - duration,
-          endMin,
-          settings.workdayStart,
-          settings.workdayEnd
+          ev.doneAt - ev.estimate,
+          ev.doneAt,
+          winStart,
+          winEnd
         );
-        dones.push({ ...ev, start: s2, end: e2, duration });
+        dones.push({ ...ev, start: s2, end: e2, duration: ev.estimate });
         continue;
+      }
+      // pending todo: planned slice schedules as before; tracked intervals
+      // (including a running CLOCK, drawn to now) appear as actual arcs.
+      if (ev.todo) {
+        for (const e of entries) {
+          const arc = toArc(ev, e, false);
+          if (arc) actuals.push(arc);
+        }
       }
       pendings.push(ev);
     }
@@ -294,9 +343,22 @@ class NautilusBlock extends MarkdownRenderChild {
     this.settings = settings;
     this.pendings = addStartAfter(pendings);
     this.dones = dones;
+    this.actuals = actuals;
     this.file = file;
     this.isDaily = isTodayDailyNote(file, this.plugin.settings.dailyNoteFormat);
     this.pageTitle = file.basename;
+    if (this.liveTimer !== null) {
+      window.clearTimeout(this.liveTimer);
+      this.liveTimer = null;
+    }
+    if (
+      this.openClock &&
+      this.isDaily &&
+      this.plugin.settings.executionLayer
+    ) {
+      // grow the live arc once a minute while a CLOCK runs
+      this.liveTimer = window.setTimeout(() => void this.refresh(), 60000);
+    }
     this.renderFrame();
   }
 
@@ -350,6 +412,7 @@ class NautilusBlock extends MarkdownRenderChild {
       planFromTime,
       showDone: this.state.showDone,
       playing: this.state.playing,
+      actuals: this.actuals,
       onProgressClick: (ev) => void this.onProgressClick(ev),
     });
     this.setPointer = rendered.setPointer;
@@ -628,6 +691,13 @@ export default class NautilusLogPlugin extends Plugin {
         while (end < lines.length && !/^\s*```\s*$/.test(lines[end])) end++;
         if (end >= lines.length) continue;
         const tasks = collectTasks(lines, end + 1);
+        // done means work stopped: close a running CLOCK whose owner checked
+        const doneTaskLines = new Set(
+          tasks.filter((t) => t.checked === true).map((t) => t.line)
+        );
+        if (closeClockIfOwnerDone(lines, doneTaskLines, new Date())) {
+          dirty = true;
+        }
         if (fixTaskLines(lines, tasks, this.settings, nowMinutes())) {
           dirty = true;
         }
