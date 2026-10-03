@@ -72,7 +72,7 @@ export interface NautEvent {
   startAfter: number;
   /** arc drawn from a real CLOCK interval (dot pattern, actual position) */
   actual?: boolean;
-  /** suppress the legend entry (all but the first arc of a task) */
+  /** suppress the legend entry (scheduling blockers; see render.ts) */
   noLegend?: boolean;
 }
 

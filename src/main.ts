@@ -256,13 +256,9 @@ class NautilusBlock extends MarkdownRenderChild {
     const descByLine = new Map<number, string>();
     let todoHueIdx = 0;
     // One arc per CLOCK interval, clipped to the workday window. A running
-    // entry reaches to now. `withLegend` only for the first arc of a task,
-    // so a multi-interval day does not repeat the same label.
-    const toArc = (
-      ev: NautEvent,
-      e: ClockInterval,
-      withLegend: boolean
-    ): NautEvent | null => {
+    // entry reaches to now. Every arc carries its legend, so each interval
+    // of a multi-interval day stays identifiable.
+    const toArc = (ev: NautEvent, e: ClockInterval): NautEvent | null => {
       const s = (e.start.getTime() - dayBaseMs) / 60000;
       const en = ((e.end?.getTime() ?? nowMs) - dayBaseMs) / 60000;
       const [a1, a2] = alignIntervalToWindow(s, en, winStart, winEnd);
@@ -275,7 +271,6 @@ class NautilusBlock extends MarkdownRenderChild {
         end: ce,
         duration: ce - cs,
         actual: true,
-        noLegend: !withLegend,
         doneAt: null,
         progress: 0,
       };
@@ -308,13 +303,9 @@ class NautilusBlock extends MarkdownRenderChild {
         // interval, ignoring planned time and the done stamp. Only without
         // any clock does the done stamp anchor an estimate-sized slice.
         if (entries.length > 0) {
-          let first = true;
           for (const e of entries) {
-            const arc = toArc(ev, e, first);
-            if (arc) {
-              actuals.push(arc);
-              first = false;
-            }
+            const arc = toArc(ev, e);
+            if (arc) actuals.push(arc);
           }
           continue;
         }
@@ -330,17 +321,13 @@ class NautilusBlock extends MarkdownRenderChild {
       }
       // pending todo: planned slice schedules as before; tracked intervals
       // (including a running CLOCK, drawn to now) appear as actual arcs.
-      // The first arc carries its own legend too — during playback the
-      // planned slice sits at a different time, so an unlabeled arc would
-      // be unidentifiable.
+      // Arcs carry their own legend too — during playback the planned slice
+      // sits at a different time, so an unlabeled arc would be
+      // unidentifiable.
       if (ev.todo) {
-        let first = true;
         for (const e of entries) {
-          const arc = toArc(ev, e, first);
-          if (arc) {
-            actuals.push(arc);
-            first = false;
-          }
+          const arc = toArc(ev, e);
+          if (arc) actuals.push(arc);
         }
       }
       pendings.push(ev);
