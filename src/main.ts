@@ -27,6 +27,7 @@ import {
   closeClockIfOwnerDone,
   closeClockLine,
   findOpenClock,
+  fixClockDurations,
 } from "./timing";
 import { PanelTab, renderExecPanel, tickElapsedLabels } from "./panel";
 import { formatDate, parseDateStrict } from "./datefmt";
@@ -225,6 +226,7 @@ class NautilusBlock extends MarkdownRenderChild {
     const clockClosed = closeClockIfOwnerDone(lines, doneTaskLines, new Date());
     if (
       clockClosed ||
+      fixClockDurations(lines) ||
       fixTaskLines(lines, tasks, settings, nowMinutes())
     ) {
       await this.plugin.app.vault.modify(file, lines.join("\n"));
@@ -254,8 +256,8 @@ class NautilusBlock extends MarkdownRenderChild {
     const descByLine = new Map<number, string>();
     let todoHueIdx = 0;
     // One arc per CLOCK interval, clipped to the workday window. A running
-    // entry reaches to now. `withLegend` only for the first arc of a done
-    // task (pending tasks already carry a legend on their planned slice).
+    // entry reaches to now. `withLegend` only for the first arc of a task,
+    // so a multi-interval day does not repeat the same label.
     const toArc = (
       ev: NautEvent,
       e: ClockInterval,
@@ -328,10 +330,17 @@ class NautilusBlock extends MarkdownRenderChild {
       }
       // pending todo: planned slice schedules as before; tracked intervals
       // (including a running CLOCK, drawn to now) appear as actual arcs.
+      // The first arc carries its own legend too — during playback the
+      // planned slice sits at a different time, so an unlabeled arc would
+      // be unidentifiable.
       if (ev.todo) {
+        let first = true;
         for (const e of entries) {
-          const arc = toArc(ev, e, false);
-          if (arc) actuals.push(arc);
+          const arc = toArc(ev, e, first);
+          if (arc) {
+            actuals.push(arc);
+            first = false;
+          }
         }
       }
       pendings.push(ev);
@@ -703,6 +712,7 @@ export default class NautilusLogPlugin extends Plugin {
         }
         i = end;
       }
+      if (fixClockDurations(lines)) dirty = true;
       if (dirty) await this.app.vault.modify(file, lines.join("\n"));
     } finally {
       this.fixingPaths.delete(file.path);

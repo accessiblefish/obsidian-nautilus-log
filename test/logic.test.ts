@@ -8,6 +8,8 @@ import {
   clockInTask,
   closeClockIfOwnerDone,
   closeClockLine,
+  fixClockDurations,
+  fixClockLineDuration,
   findOpenClock,
   formatClockLine,
   lastClockEndMs,
@@ -161,6 +163,39 @@ eq(
   ]
 );
 
+// actual CLOCK arcs block planned placement (playback lays the plan out
+// from the workday start; pending todos must not land on tracked time)
+const blockers = [
+  mk({ description: "arcA", meeting: true, todo: false, actual: true, noLegend: true, start: 590, end: 640 }),
+];
+const replay = fillDay(
+  [
+    mk({ description: "todoA", duration: 60 }),
+    mk({ description: "todoB", duration: 120 }),
+    ...blockers,
+  ],
+  420,
+  1320,
+  0 // playback: plan from the workday start
+).scheduled;
+const slimReplay = replay.map((d) => [d.description || "free", d.start, d.end]);
+eq(
+  "playback plan flows around actual arcs",
+  slimReplay,
+  [
+    ["todoA", 420, 480],
+    ["free", 480, 590],
+    ["arcA", 590, 640],
+    ["todoB", 640, 760],
+    ["free", 760, 1320],
+  ]
+);
+eq(
+  "blockers filtered back out of the schedule",
+  replay.filter((e) => !e.actual).map((d) => d.description || "free"),
+  ["todoA", "free", "todoB", "free"]
+);
+
 // ---- overnight window ----
 eq("window end after start", workdayWindow({ ...S, workdayStart: 480, workdayEnd: 1320 }), [480, 1320]);
 eq("window crosses midnight", workdayWindow({ ...S, workdayStart: 1200, workdayEnd: 120 }), [1200, 1560]);
@@ -265,6 +300,24 @@ const D = (h: number, m: number) => new Date(2026, 7, 26, h, m, 0, 0);
   const day0 = new Date(2026, 7, 26, 0, 0, 0, 0).getTime();
   eq("actual minutes in window", actualMinutesInWindow(entries, day0, day0 + 1440 * 60000, D(12, 0).getTime()), 30);
   eq("last clock end", lastClockEndMs(entries), D(10, 30).getTime());
+}
+{
+  // stale `=> h:mm` after a manual end-time edit gets repaired from the stamps
+  const lines = [
+    "- [ ] Task A 30m",
+    "  - CLOCK: [2026-08-26 Wed 09:50]--[2026-08-26 Wed 10:40] => 1:01",
+    "  - CLOCK: [2026-08-26 Wed 11:00]",
+    "  - CLOCK: [2026-08-26 Wed 12:00]--[2026-08-26 Wed 12:20]",
+  ];
+  eq("fix stale clock duration", fixClockLineDuration(lines, 1), true);
+  eq("stale duration repaired", lines[1], "  - CLOCK: [2026-08-26 Wed 09:50]--[2026-08-26 Wed 10:40] => 0:50");
+  eq("correct duration untouched", fixClockLineDuration(lines, 1), false);
+  eq("open clock untouched", fixClockLineDuration(lines, 2), false);
+  eq("missing duration left alone", fixClockLineDuration(lines, 3), false);
+  const file = [...lines, "    - CLOCK: [2026-08-26 Wed 13:00]--[2026-08-26 Wed 13:30] => 1:30"];
+  eq("fixClockDurations scans whole file", fixClockDurations(file), true);
+  eq("indented clock repaired", file[4], "    - CLOCK: [2026-08-26 Wed 13:00]--[2026-08-26 Wed 13:30] => 0:30");
+  eq("nothing left to fix", fixClockDurations(file), false);
 }
 {
   // legacy LOGBOOK-wrapped entries still parse (read compatibility)

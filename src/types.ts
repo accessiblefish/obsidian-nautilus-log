@@ -72,7 +72,7 @@ export interface NautEvent {
   startAfter: number;
   /** arc drawn from a real CLOCK interval (dot pattern, actual position) */
   actual?: boolean;
-  /** suppress the legend entry (actual arcs of pending tasks share the planned slice's legend) */
+  /** suppress the legend entry (all but the first arc of a task) */
   noLegend?: boolean;
 }
 

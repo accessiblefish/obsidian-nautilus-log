@@ -184,6 +184,36 @@ export function closeClockLine(lines: string[], clockLine: number, now: Date): b
 }
 
 /**
+ * Recompute a closed CLOCK line's `=> h:mm` from its timestamps. The
+ * duration text goes stale when the end stamp is edited by hand; the
+ * parser always derives minutes from the stamps, so this only repairs
+ * the display text. A missing `=>` is left alone. Returns true on a
+ * change.
+ */
+export function fixClockLineDuration(lines: string[], clockLine: number): boolean {
+  const m = CLOCK_LINE_RE.exec(lines[clockLine]);
+  if (!m || !m[3] || !m[4]) return false;
+  const start = parseClockStamp(m[2]);
+  const end = parseClockStamp(m[3]);
+  if (!start || !end || end < start) return false;
+  const want = formatDurationHMM(
+    Math.floor((end.getTime() - start.getTime()) / 60000)
+  );
+  if (m[4] === want) return false;
+  lines[clockLine] = `${m[1]}${formatClockLine(start, end)}`;
+  return true;
+}
+
+/** Repair stale `=> h:mm` durations on every closed CLOCK line. */
+export function fixClockDurations(lines: string[]): boolean {
+  let dirty = false;
+  for (let i = 0; i < lines.length; i++) {
+    if (fixClockLineDuration(lines, i)) dirty = true;
+  }
+  return dirty;
+}
+
+/**
  * Clock in a task: closes any running CLOCK in the file at the same
  * instant and inserts a fresh open CLOCK as a direct child of the task
  * (after any existing CLOCK entries). Mutates `lines` (with insertions)

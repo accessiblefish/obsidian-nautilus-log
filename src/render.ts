@@ -594,12 +594,25 @@ export function buildNautilusSvg(
   const h0 = 0.7 * w0;
   const innerRadius = 50 * scaler;
 
-  const { scheduled, overflow } = fillDay(
-    pendings,
+  // Actual CLOCK arcs block planned placement: tracked time is already
+  // spent, so pending todos must flow around it. This only bites during
+  // playback (planFromTime = 0), where the naive plan would otherwise be
+  // laid out on top of the arcs; in the live view every arc ends before
+  // "now", so placement is unchanged. Blockers are filtered back out of
+  // the schedule — actual arcs render from p.actuals, not from slices.
+  const blockers = p.actuals.map((a) => ({
+    ...a,
+    meeting: true,
+    todo: false,
+    noLegend: true,
+  }));
+  const { scheduled: laid, overflow } = fillDay(
+    [...pendings, ...blockers],
     p.settings.workdayStart,
     p.settings.workdayEnd,
     p.planFromTime
   );
+  const scheduled = laid.filter((e) => !e.actual);
   // actual arcs of done tasks follow the showDone toggle; pending ones stay
   const visibleActuals = p.actuals.filter((a) => p.showDone || !a.done);
   const allForDim = [
