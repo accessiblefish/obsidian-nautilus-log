@@ -24,9 +24,6 @@ Compared to the original Roam version, this port brings native Obsidian workflow
 See the [user guide](./docs/guide.md) for the Execution Layer (CLOCK tracking, POMO, daily review), settings, and commands.
 
 ## Quick Start
-### Installation
-- Via BRAT: Add `accessiblefish/obsidian-nautilus-log` in the BRAT settings.
-- Manual: Download the latest release from the Releases tab and place main.js, manifest.json, and styles.css into your vault's .obsidian/plugins/obsidian-nautilus-log/ folder.
 
 ### Usage
 Open today's Daily Note. The plugin detects daily notes by filename (default `YYYY-MM-DD`); if yours differ, set **Daily note date format** in the plugin settings.

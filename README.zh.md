@@ -22,9 +22,6 @@
 执行层（CLOCK 计时、POMO、每日复盘）、设置与命令详见[使用指南](./docs/guide.zh-CN.md)。
 
 ## 快速上手
-### 安装
-- **BRAT**：在 BRAT 设置中添加 `accessiblefish/obsidian-nautilus-log`。
-- **手动**：从 Releases 页面下载最新版本，将 `main.js`、`manifest.json`、`styles.css` 放入库目录的 `.obsidian/plugins/obsidian-nautilus-log/` 文件夹。
 
 ### 使用
 打开今天的日记。插件按文件名识别日记（默认 `YYYY-MM-DD`）；格式不同的话，在插件设置里修改 **Daily note date format**。
