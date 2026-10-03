@@ -748,13 +748,10 @@ export default class NautilusLogPlugin extends Plugin {
 /** Description with an optional subtle warning line below. */
 function descWithWarn(desc: string, warn?: string): string | DocumentFragment {
   if (!warn) return desc;
-  const frag = document.createDocumentFragment();
-  frag.appendText(desc);
-  const w = document.createElement("div");
-  w.className = "nautilus-setting-warn";
-  w.textContent = warn;
-  frag.appendChild(w);
-  return frag;
+  return createFragment((frag) => {
+    frag.appendText(desc);
+    frag.createDiv({ cls: "nautilus-setting-warn", text: warn });
+  });
 }
 
 class NautilusSettingTab extends PluginSettingTab {
