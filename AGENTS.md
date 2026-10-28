@@ -14,7 +14,7 @@
 
 正确步骤：
 
-1. 确认 `npm test` 全部通过、`npm run build` 成功、工作区无未提交改动。
+1. 确认 `npm test` 全部通过、`npm run lint` 无错误、`npm run build` 成功、工作区无未提交改动。
 2. `npm version x.y.z`——自动同步 `package.json` / `manifest.json` / `versions.json` 并创建 commit 和 tag（tag 无 `v` 前缀）。
 3. `git push origin main --follow-tags`。
 4. 用 `gh run list` 确认 Release workflow 成功；release 由 CI 创建，标题为 tag 名，notes 自动生成。

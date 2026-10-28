@@ -70,7 +70,7 @@ export class DeskModal extends Modal {
 
   onOpen(): void {
     this.modalEl.addClass("nautilus-desk-modal");
-    this.setTitle("nautilus task");
+    this.setTitle("Nautilus task");
     this.render();
     this.scope.register(["Mod", "Alt"], "ArrowLeft", () => {
       void this.navigate(-1);
@@ -212,7 +212,7 @@ export class DeskModal extends Modal {
     try {
       const entry = await this.handlers.appendLog(task, text);
       if (!entry) {
-        new Notice("Nautilus Log: the task changed, so the log was not saved.");
+        new Notice("Nautilus log: the task changed, so the log was not saved.");
         return false;
       }
       if (task.line === this.currentTask().line && this.input) {
@@ -226,7 +226,7 @@ export class DeskModal extends Modal {
       return true;
     } catch (error) {
       console.error("[Nautilus Log] Desk log write failed", error);
-      new Notice("Nautilus Log: the log could not be saved.");
+      new Notice("Nautilus log: the log could not be saved.");
       return false;
     } finally {
       this.busy = false;

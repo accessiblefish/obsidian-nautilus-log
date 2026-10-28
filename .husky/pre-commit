@@ -1,0 +1,5 @@
+# Lint staged TypeScript files before commit
+files=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(ts|tsx|mts|cts)$' || true)
+if [ -n "$files" ]; then
+  echo "$files" | xargs npx eslint
+fi

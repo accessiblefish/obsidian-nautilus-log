@@ -948,7 +948,7 @@ export default class NautilusLogPlugin extends Plugin {
           ? sections[0]
           : sections.find((candidate) => candidate.start === sectionStart);
       if (!section || section.tasks.length === 0) {
-        new Notice("Nautilus Log: no plan items found to tidy.");
+        new Notice("Nautilus log: no plan items found to tidy.");
         return;
       }
       const sectionSettings = parseBlockArgs(
@@ -965,7 +965,7 @@ export default class NautilusLogPlugin extends Plugin {
       const key = `${f.path}:${section.index}`;
       if (edit.count === 0) {
         this.tidyUndoStates.delete(key);
-        new Notice("Nautilus Log: plan is already tidy.");
+        new Notice("Nautilus log: plan is already tidy.");
         return;
       }
 
@@ -981,7 +981,7 @@ export default class NautilusLogPlugin extends Plugin {
       this.showTidyNotice(key, token, edit.count);
     } catch (error) {
       console.error("[Nautilus Log] Tidy failed", error);
-      new Notice("Nautilus Log: tidy could not be completed.");
+      new Notice("Nautilus log: tidy could not be completed.");
     } finally {
       this.tidyBusyPaths.delete(f.path);
     }
@@ -1023,16 +1023,16 @@ export default class NautilusLogPlugin extends Plugin {
       if (!restored) {
         this.tidyUndoStates.delete(key);
         new Notice(
-          "Nautilus Log: the plan changed after Tidy, so Undo was not applied."
+          "Nautilus log: the plan changed after tidy, so undo was not applied."
         );
         return;
       }
       await this.app.vault.modify(state.file, restored.join("\n"));
       this.tidyUndoStates.delete(key);
-      new Notice("Nautilus Log: tidy undone.");
+      new Notice("Nautilus log: tidy undone.");
     } catch (error) {
       console.error("[Nautilus Log] Tidy undo failed", error);
-      new Notice("Nautilus Log: tidy could not be undone.");
+      new Notice("Nautilus log: tidy could not be undone.");
     }
   }
 
@@ -1147,7 +1147,7 @@ export default class NautilusLogPlugin extends Plugin {
       const lines = (await this.app.vault.read(file)).split("\n");
       const task = this.deskTaskInLines(lines, sectionStart, expected);
       if (!task) {
-        new Notice("Nautilus Log: the task could not be located in the note.");
+        new Notice("Nautilus log: the task could not be located in the note.");
         return;
       }
       const content = buildTaskNoteContent(lines, {
@@ -1159,7 +1159,7 @@ export default class NautilusLogPlugin extends Plugin {
       await this.app.workspace.getLeaf("tab").openFile(note);
     } catch (error) {
       console.error("[Nautilus Log] Could not create task note", error);
-      new Notice("Nautilus Log: the task note could not be created.");
+      new Notice("Nautilus log: the task note could not be created.");
     }
   }
 

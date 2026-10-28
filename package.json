@@ -5,16 +5,26 @@
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "prepare": "husky",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "version": "node version-bump.mjs && git add manifest.json versions.json",
     "test": "esbuild test/logic.test.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/logic.test.cjs --log-level=warning && node node_modules/.cache/logic.test.cjs"
   },
   "license": "MIT",
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@eslint/json": "^2.1.1",
     "@types/node": "^16.11.6",
     "esbuild": "0.17.3",
+    "eslint": "^10.13.0",
+    "eslint-plugin-obsidianmd": "^0.4.2",
+    "globals": "^17.13.0",
+    "husky": "^9.1.7",
     "obsidian": "latest",
     "tslib": "2.4.0",
-    "typescript": "4.7.4"
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.72.1"
   }
 }
