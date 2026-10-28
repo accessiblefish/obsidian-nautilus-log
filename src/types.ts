@@ -17,6 +17,8 @@ export interface NautilusSettings {
   dailyNoteFormat: string;
   /** folder containing daily notes; empty = vault root */
   dailyNotesFolder: string;
+  /** folder for task notes created from Desk; empty = vault root */
+  taskNotesFolder: string;
   /** Execution Layer: CLOCK tracking, POMO and daily review (default off) */
   executionLayer: boolean;
   /** POMO live signal threshold in minutes */
@@ -43,6 +45,7 @@ export const DEFAULT_SETTINGS: NautilusSettings = {
   showPlaybackButton: true,
   dailyNoteFormat: "YYYY-MM-DD",
   dailyNotesFolder: "",
+  taskNotesFolder: "Nautilus",
   executionLayer: false,
   pomodoroThreshold: 25,
   recentRetention: 45,
@@ -74,6 +77,8 @@ export interface NautEvent {
   actual?: boolean;
   /** suppress the legend entry (scheduling blockers; see render.ts) */
   noLegend?: boolean;
+  /** user-facing schedule warning shown below the chart */
+  warning?: string;
 }
 
 /**

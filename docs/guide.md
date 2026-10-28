@@ -2,6 +2,64 @@
 
 [Back to README](../README.md) · [简体中文](./guide.zh-CN.md)
 
+## Capacity header
+
+The two rows above the spiral show **Planned**, **Free** (or **Over / No slot**),
+and **Left**, followed by **Available** and **Events**. The first values describe
+remaining time from now; values after `/` are full-day totals. Positive free
+capacity is green, while overload and fragmented capacity use a warning color.
+
+## Visual language
+
+- Red: urgent task; yellow: fixed event; blue: flexible task.
+- Red needle and center label: current time.
+- Muted elapsed sectors and hatched unplanned gaps: recorded past versus
+  elapsed time with no recorded item.
+- Hover or keyboard-focus a task/event slice to see its exact range and
+  duration. Future blank slots expose the same Available preview. Escape
+  dismisses the tooltip.
+- Reduced-motion preferences disable playback and hover animations.
+
+## Chart controls
+
+- **Eye:** show or hide completed items.
+- **Play:** replay the configured day without changing the note.
+- **Tidy:** move completed tasks and elapsed fixed events to the front while
+  preserving the relative order of active work. Tidy moves complete Markdown
+  list items, including their indented CLOCK records and subtasks, without
+  changing task text or fixed times. The currently running task is never
+  moved. A 10-second Undo notification is available unless the plan changes.
+- **Collapse:** hide this chart instance while keeping its plan items visible.
+
+**Unscheduled today** and **Schedule warnings** appear as expandable panels
+below the chart when needed. Overnight ranges remain continuous and are
+labelled as continuing into the next day.
+
+## Desk logging MVP
+
+Unfinished flexible tasks appear as cards under **Nautilus Desk**. Select a card
+to open a focused task window, then write a log and press Enter or **Log**.
+Previous/next buttons and `Ctrl/Cmd + Alt + Left/Right` save the current input
+before changing tasks. **Open task note** creates a Markdown file for the task
+and opens it in Obsidian's native editor. Configure the destination with
+**Task notes folder** (default: `Nautilus`). LOG and CLOCK entries appear as a
+list above a `---` divider, with free writing space below it. New Desk logs
+refresh only the activity list and preserve everything below the divider.
+Existing task notes are opened without being overwritten; the original Daily
+Note task is preserved.
+
+Each entry is appended to the original task without changing CLOCK records or
+other descendants:
+
+```markdown
+- [ ] Write report 45m
+  - LOG: [2026-08-26 Wed 10:05] Completed the outline
+```
+
+The Daily Note remains the source of truth. Tidy moves these LOG entries with
+their task. The MVP intentionally covers only the current plan, not a vault-wide
+Desk or a separate chronological stream view.
+
 ## The Execution Layer
 
 The Execution Layer adds time *tracking* on top of time *planning*. It is
@@ -119,4 +177,5 @@ took 2h reports +1h30m.
 
 - **Clock in/out task on current line** — bind a hotkey for the fastest flow
 - **Clock out current task**
+- **Tidy primary plan** — tidy today's first plan, even when its chart is not rendered
 - **Locate primary plan** — jump to today's daily note

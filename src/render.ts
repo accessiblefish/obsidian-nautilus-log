@@ -18,6 +18,12 @@ import {
 } from "./geometry";
 
 import { fillDay } from "./scheduler";
+import { formatCapacityDuration } from "./capacity";
+import {
+  availableSlotGroups,
+  pastTimelineSegments,
+  pastUnplannedSegments,
+} from "./timeline";
 
 const FONT_FAMILY =
   "'方正屏显雅宋简体', 'FZPingXianYaSong-R-GBK', 'PingFang SC', 'Microsoft YaHei', sans-serif";
@@ -37,8 +43,9 @@ const GRAY = "rgba(128,128,128,0.1)";
 const CLOCK_HAND_COLOR = "#EA0F0F5B";
 const SPIRAL_COLOR = "var(--naut-spiral)";
 const BENT_LINE_GAP = 5;
-const DOT_PATTERN_ID = "nautilus-dot-pattern";
 const PLAYBACK_SECONDS = 6;
+let chartInstance = 0;
+let tooltipInstance = 0;
 
 /**
  * Pop-in delay for the playback animation, in the SAME domain as the
@@ -102,6 +109,144 @@ interface Ctx {
   fontSize: number;
   innerRadius: number;
   isMobile: boolean;
+  dotPatternId: string;
+  unplannedPatternId: string;
+  tooltip: ChartTooltip;
+}
+
+interface TooltipInfo {
+  title: string;
+  meta: string;
+  ariaLabel: string;
+  start: number;
+  end: number;
+}
+
+function clockLabel(minutes: number): string {
+  const h = Math.floor(minutes / 60) % 24;
+  const m = Math.floor(minutes % 60);
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function tooltipInfo(
+  title: string,
+  kind: string,
+  start: number,
+  end: number
+): TooltipInfo {
+  const range = `${clockLabel(start)}–${clockLabel(end)}`;
+  const duration = formatCapacityDuration(end - start);
+  return {
+    title,
+    meta: `${kind} · ${range} · ${duration}`,
+    ariaLabel: `${title}. ${kind}. ${range}. ${duration}`,
+    start,
+    end,
+  };
+}
+
+/** Body-level tooltip shared by mouse and keyboard focus, clipped to viewport. */
+class ChartTooltip {
+  private el: HTMLDivElement | null = null;
+  private owner: SVGGElement | null = null;
+  private readonly id = `nautilus-tooltip-${++tooltipInstance}`;
+
+  attach(target: SVGGElement, info: TooltipInfo, ctx: Ctx): void {
+    target.addEventListener("mouseenter", () => this.show(target, info, ctx));
+    target.addEventListener("mouseleave", () => this.hide(target));
+    target.addEventListener("focus", () => this.show(target, info, ctx));
+    target.addEventListener("blur", () => this.hide(target));
+    target.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        this.hide(target);
+        event.stopPropagation();
+      }
+    });
+  }
+
+  private show(target: SVGGElement, info: TooltipInfo, ctx: Ctx): void {
+    this.hide();
+    const svg = target.ownerSVGElement;
+    if (!svg) return;
+    const el = document.createElement("div");
+    el.id = this.id;
+    el.className = "nautilus-hover-tooltip";
+    el.setAttribute("role", "tooltip");
+    const title = document.createElement("strong");
+    title.textContent = info.title;
+    const meta = document.createElement("span");
+    meta.textContent = info.meta;
+    el.append(title, meta);
+    document.body.appendChild(el);
+    this.el = el;
+    this.owner = target;
+    target.setAttribute("aria-describedby", this.id);
+
+    const mid = posSweepAngleMid(
+      angleToRad(minToAngle(info.start)),
+      angleToRad(minToAngle(info.end))
+    );
+    const radius = (MAX_PROFILE_RADIUS + 15) * ctx.scaler;
+    const point = { x: ctx.center.cx + Math.cos(mid) * radius, y: ctx.center.cy - Math.sin(mid) * radius };
+    const center = { x: ctx.center.cx, y: ctx.center.cy };
+    const matrix = svg.getScreenCTM();
+    let anchorX: number;
+    let anchorY: number;
+    let centerX: number;
+    let centerY: number;
+    if (matrix) {
+      const anchor = svg.createSVGPoint();
+      anchor.x = point.x;
+      anchor.y = point.y;
+      const screenAnchor = anchor.matrixTransform(matrix);
+      const svgCenter = svg.createSVGPoint();
+      svgCenter.x = center.x;
+      svgCenter.y = center.y;
+      const screenCenter = svgCenter.matrixTransform(matrix);
+      anchorX = screenAnchor.x;
+      anchorY = screenAnchor.y;
+      centerX = screenCenter.x;
+      centerY = screenCenter.y;
+    } else {
+      const rect = target.getBoundingClientRect();
+      anchorX = rect.right;
+      anchorY = rect.top + rect.height / 2;
+      centerX = rect.left;
+      centerY = anchorY;
+    }
+
+    const dx = anchorX - centerX;
+    const dy = anchorY - centerY;
+    const preferred = Math.abs(dx) >= Math.abs(dy)
+      ? dx < 0 ? "left" : "right"
+      : dy < 0 ? "top" : "bottom";
+    const width = el.offsetWidth;
+    const height = el.offsetHeight;
+    const gap = 10;
+    let left = preferred === "left" ? anchorX - width - gap : anchorX + gap;
+    let top = anchorY - height / 2;
+    if (preferred === "top" || preferred === "bottom") {
+      left = anchorX - width / 2;
+      top = preferred === "top" ? anchorY - height - gap : anchorY + gap;
+    }
+    left = Math.max(12, Math.min(window.innerWidth - width - 12, left));
+    top = Math.max(12, Math.min(window.innerHeight - height - 12, top));
+    el.style.left = `${left}px`;
+    el.style.top = `${top}px`;
+    el.classList.add("is-positioned");
+  }
+
+  private hide(target?: SVGGElement): void {
+    if (target && this.owner !== target) return;
+    this.owner?.removeAttribute("aria-describedby");
+    this.el?.remove();
+    this.el = null;
+    this.owner = null;
+  }
+
+  destroy(): void {
+    this.hide();
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -159,7 +304,7 @@ function renderSlice(
     g.appendChild(
       svgEl("path", {
         d: createArcPath(startAngle, endAngle, innerRadius, outerRadius, center),
-        fill: `url(#${DOT_PATTERN_ID})`,
+        fill: `url(#${ctx.dotPatternId})`,
       })
     );
   }
@@ -286,8 +431,19 @@ function renderSlice(
  * Spiral blueprint (hour ring template)
  * ------------------------------------------------------------------ */
 
+function cellInnerRadius(minute: number, ctx: Ctx): number {
+  const innerIdx = spiralCellInnerIndex(
+    minute,
+    ctx.p.settings.workdayEnd,
+    ctx.p.settings.workdayStart
+  );
+  return innerIdx != null
+    ? Math.max(ctx.innerRadius, SNAIL_PROFILE_RADII[innerIdx] * ctx.scaler)
+    : ctx.innerRadius;
+}
+
 function renderBlueprint(ctx: Ctx): SVGGElement {
-  const g = svgEl("g");
+  const g = svgEl("g", { class: "nautilus-grid", "aria-hidden": "true" });
   const ws = ctx.p.settings.workdayStart;
   const we = ctx.p.settings.workdayEnd;
   // one cell per hour across the whole window (which may cross midnight);
@@ -295,13 +451,8 @@ function renderBlueprint(ctx: Ctx): SVGGElement {
   // radius so the +12h paired cell on the same angle stays visible
   for (let m = ws; m < we; m += 60) {
     const end = Math.min(we, m + 60);
-    const innerIdx = spiralCellInnerIndex(m, we, ws);
-    const innerR =
-      innerIdx != null
-        ? Math.max(ctx.innerRadius, SNAIL_PROFILE_RADII[innerIdx] * ctx.scaler)
-        : ctx.innerRadius;
     g.appendChild(
-      renderSlice(minToAngle(m), minToAngle(end), innerR, profileRadius(m, ws, ctx.scaler), ctx, {
+      renderSlice(minToAngle(m), minToAngle(end), cellInnerRadius(m, ctx), profileRadius(m, ws, ctx.scaler), ctx, {
         borderColor: SPIRAL_COLOR,
         timestamp: String(Math.floor(m / 60) % 24),
       })
@@ -327,6 +478,102 @@ function renderBlueprint(ctx: Ctx): SVGGElement {
     );
   }
   return g;
+}
+
+function renderPastOverlays(
+  occupiedEvents: NautEvent[],
+  ctx: Ctx
+): SVGGElement | null {
+  if (!ctx.p.isDaily && !ctx.p.playing) return null;
+  const { workdayStart, workdayEnd } = ctx.p.settings;
+  const g = svgEl("g", { "aria-hidden": "true" });
+  const past = svgEl("g", { class: "nautilus-past-overlay" });
+  for (const segment of pastTimelineSegments(
+    workdayStart,
+    workdayEnd,
+    ctx.p.nowMin
+  )) {
+    past.appendChild(
+      svgEl("path", {
+        d: createArcPath(
+          minToAngle(segment.start),
+          minToAngle(segment.end),
+          cellInnerRadius(segment.start, ctx),
+          profileRadius(segment.start, workdayStart, ctx.scaler),
+          ctx.center
+        ),
+      })
+    );
+  }
+  g.appendChild(past);
+
+  const unplanned = svgEl("g", { class: "nautilus-unplanned-overlay" });
+  for (const segment of pastUnplannedSegments({
+    startMinutes: workdayStart,
+    endMinutes: workdayEnd,
+    nowMinutes: ctx.p.nowMin,
+    occupiedEvents,
+  })) {
+    unplanned.appendChild(
+      svgEl("path", {
+        d: createArcPath(
+          minToAngle(segment.start),
+          minToAngle(segment.end),
+          cellInnerRadius(segment.start, ctx),
+          profileRadius(segment.start, workdayStart, ctx.scaler),
+          ctx.center
+        ),
+        fill: `url(#${ctx.unplannedPatternId})`,
+      })
+    );
+  }
+  g.appendChild(unplanned);
+  return g;
+}
+
+function renderAvailableSlots(events: NautEvent[], ctx: Ctx): SVGGElement {
+  const { workdayStart, workdayEnd } = ctx.p.settings;
+  const slots = availableSlotGroups({
+    events,
+    startMinutes: workdayStart,
+    endMinutes: workdayEnd,
+    nowMinutes: ctx.p.nowMin,
+    clampToNow: ctx.p.isDaily || ctx.p.playing,
+  });
+  const root = svgEl("g", { class: "nautilus-available-slots" });
+  for (const slot of slots) {
+    const info = tooltipInfo(
+      slot.availableNow ? "Available now" : "Available slot",
+      "Available",
+      slot.start,
+      slot.end
+    );
+    const group = svgEl("g", {
+      class: "nautilus-available-slot" + (slot.availableNow ? " is-now" : ""),
+      tabindex: 0,
+      focusable: "true",
+      role: "img",
+      "aria-label": info.ariaLabel,
+    });
+    ctx.tooltip.attach(group, info, ctx);
+    for (const segment of slot.segments) {
+      group.appendChild(
+        svgEl("path", {
+          class: "nautilus-available-slot-hit",
+          d: createArcPath(
+            minToAngle(segment.start),
+            minToAngle(segment.end),
+            cellInnerRadius(segment.start, ctx),
+            profileRadius(segment.start, workdayStart, ctx.scaler),
+            ctx.center
+          ),
+          "vector-effect": "non-scaling-stroke",
+        })
+      );
+    }
+    root.appendChild(group);
+  }
+  return root;
 }
 
 /* ------------------------------------------------------------------ *
@@ -368,7 +615,24 @@ function eventSlices(
 ): SVGGElement {
   const { p } = ctx;
   const { bg, done, clickToProgress } = sliceParams(event, index, p);
-  const group = svgEl("g", { class: "event-slice-group" });
+  const group = svgEl("g", {
+    class: "event-slice-group",
+    tabindex: 0,
+    focusable: "true",
+    role: clickToProgress ? "button" : "img",
+  });
+  const kind = event.actual ? "Actual" : event.meeting ? "Event" : "Task";
+  const info = tooltipInfo(event.description, kind, event.start, event.end);
+  group.setAttribute("aria-label", info.ariaLabel);
+  ctx.tooltip.attach(group, info, ctx);
+  if (clickToProgress && p.onProgressClick) {
+    group.addEventListener("keydown", (keyboardEvent) => {
+      if (keyboardEvent.key === "Enter" || keyboardEvent.key === " ") {
+        keyboardEvent.preventDefault();
+        p.onProgressClick!(event);
+      }
+    });
+  }
 
   const segments: [number, number][] = [];
   let curr = event.start;
@@ -505,7 +769,11 @@ function eventsToNewDimensions(
  * Center label + now pointer
  * ------------------------------------------------------------------ */
 
-function renderCentralLabel(pageTitle: string, ctx: Ctx): SVGGElement {
+function renderCentralLabel(
+  pageTitle: string,
+  ctx: Ctx,
+  nowLabel: string | null
+): SVGGElement {
   const rows = pageTitle
     .split(/,(.+)/)
     .filter((s) => s !== undefined && s !== "")
@@ -529,7 +797,7 @@ function renderCentralLabel(pageTitle: string, ctx: Ctx): SVGGElement {
       [txt(rows[0])]
     )
   );
-  if (rows.length > 1) {
+  if (nowLabel || rows.length > 1) {
     g.appendChild(
       svgEl(
         "text",
@@ -538,11 +806,12 @@ function renderCentralLabel(pageTitle: string, ctx: Ctx): SVGGElement {
           y: cy + 13,
           "text-anchor": "middle",
           "dominant-baseline": "central",
-          fill: "var(--naut-text-sub)",
+          class: nowLabel ? "nautilus-center-now" : "",
+          fill: nowLabel ? CLOCK_HAND_COLOR : "var(--naut-text-sub)",
           "font-weight": "500",
           "font-size": ctx.fontSize * 0.7,
         },
-        [txt(rows[1])]
+        [txt(nowLabel ?? rows[1])]
       )
     );
   }
@@ -580,6 +849,8 @@ export interface NautilusRender {
   setPointer: (nowMin: number) => void;
   /** Todos that did not fit into the workday window. */
   overflow: NautEvent[];
+  /** Remove body-level tooltip state before this chart is replaced. */
+  destroy: () => void;
 }
 
 export function buildNautilusSvg(
@@ -593,6 +864,10 @@ export function buildNautilusSvg(
   const w0 = isMobile ? 450 : 600;
   const h0 = 0.7 * w0;
   const innerRadius = 50 * scaler;
+  const instance = ++chartInstance;
+  const dotPatternId = `nautilus-dot-pattern-${instance}`;
+  const unplannedPatternId = `nautilus-unplanned-pattern-${instance}`;
+  const tooltip = new ChartTooltip();
 
   // Actual CLOCK arcs block planned placement: tracked time is already
   // spent, so pending todos must flow around it. This only bites during
@@ -621,7 +896,16 @@ export function buildNautilusSvg(
     ...visibleActuals,
   ];
 
-  const baseCtx = { p, scaler, fontSize, innerRadius, isMobile };
+  const baseCtx = {
+    p,
+    scaler,
+    fontSize,
+    innerRadius,
+    isMobile,
+    dotPatternId,
+    unplannedPatternId,
+    tooltip,
+  };
   const [cx, width, cy, height] = eventsToNewDimensions(
     allForDim,
     { cx: w0 / 2, cy: h0 / 2 },
@@ -647,7 +931,7 @@ export function buildNautilusSvg(
 
   const defs = svgEl("defs");
   const pattern = svgEl("pattern", {
-    id: DOT_PATTERN_ID,
+    id: dotPatternId,
     width: 4,
     height: 4,
     patternUnits: "userSpaceOnUse",
@@ -655,24 +939,57 @@ export function buildNautilusSvg(
   pattern.appendChild(svgEl("circle", { r: 0.5, cx: 1, cy: 1, fill: "gray" }));
   pattern.appendChild(svgEl("circle", { r: 0.5, cx: 5, cy: 5, fill: "gray" }));
   defs.appendChild(pattern);
+  const unplannedPattern = svgEl("pattern", {
+    id: unplannedPatternId,
+    class: "nautilus-unplanned-pattern",
+    width: 7,
+    height: 7,
+    patternUnits: "userSpaceOnUse",
+    patternTransform: "rotate(45)",
+  });
+  unplannedPattern.appendChild(
+    svgEl("line", {
+      class: "nautilus-unplanned-stripe",
+      x1: 0,
+      y1: 0,
+      x2: 0,
+      y2: 7,
+    })
+  );
+  defs.appendChild(unplannedPattern);
   svg.appendChild(defs);
 
+  const past = renderPastOverlays(
+    [...scheduled.filter((event) => !event.freetime), ...dones, ...p.actuals],
+    ctx
+  );
+  if (past) svg.appendChild(past);
   svg.appendChild(renderBlueprint(ctx));
   if (doneG) svg.appendChild(doneG);
   svg.appendChild(slicesG);
   svg.appendChild(actualG);
+  svg.appendChild(renderAvailableSlots(scheduled, ctx));
+  const showNow =
+    (p.isDaily || p.playing) &&
+    p.nowMin >= p.settings.workdayStart &&
+    p.nowMin < p.settings.workdayEnd;
   let pointer: SVGLineElement | null = null;
-  if (p.isDaily || p.playing) {
+  if (showNow) {
     pointer = renderNowPointer(ctx);
     svg.appendChild(pointer);
   }
-  svg.appendChild(renderCentralLabel(p.pageTitle, ctx));
+  svg.appendChild(
+    renderCentralLabel(p.pageTitle, ctx, showNow ? clockLabel(p.nowMin) : null)
+  );
+  const centerNow = svg.querySelector(".nautilus-center-now");
 
   return {
     svg,
     setPointer: (nowMin: number) => {
       if (pointer) setPointerPosition(pointer, nowMin, ctx);
+      if (centerNow) centerNow.textContent = clockLabel(nowMin);
     },
     overflow,
+    destroy: () => tooltip.destroy(),
   };
 }

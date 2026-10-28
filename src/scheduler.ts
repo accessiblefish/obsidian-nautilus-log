@@ -121,7 +121,7 @@ export function fillDay(
       const nm = meetings[mi];
       if (nm) {
         if (nm.start > time) {
-          if (nt && time + nt.duration < nm.start && nt.startAfter <= time) {
+          if (nt && time + nt.duration <= nm.start && nt.startAfter <= time) {
             result.push({ ...nt, start: time, end: time + nt.duration });
             time += nt.duration;
             ti++;

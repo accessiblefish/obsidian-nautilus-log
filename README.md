@@ -20,6 +20,7 @@ Compared to the original Roam version, this port brings native Obsidian workflow
 
 - **Markdown-Native Parser**: Uses native Obsidian Markdown list items (- [ ]) instead of Roam's internal block syntax.
 - **Built-in Completion Timestamp**: Automatically appends completion timestamps (e.g., d08:47) upon task completion for effortless tracking.
+- **One-click Tidy**: Moves completed tasks and elapsed events to the front without changing active priority, with conflict-safe Undo.
 
 See the [user guide](./docs/guide.md) for the Execution Layer (CLOCK tracking, POMO, daily review), settings, and commands.
 

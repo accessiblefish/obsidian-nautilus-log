@@ -7,6 +7,8 @@ import {
   PluginSettingTab,
   SettingDefinitionItem,
   TFile,
+  TFolder,
+  normalizePath,
   setIcon,
 } from "obsidian";
 import { DEFAULT_SETTINGS, NautEvent, NautilusSettings, workdayWindow } from "./types";
@@ -32,6 +34,27 @@ import {
 import { PanelTab, renderExecPanel, tickElapsedLabels } from "./panel";
 import { formatDate, parseDateStrict } from "./datefmt";
 import { buildNautilusSvg, TODO_PALETTE } from "./render";
+import { createTidyEdit, restoreTidyEdit, settledTaskLines } from "./tidy";
+import {
+  Capacity,
+  calculateCapacity,
+  capacityMetrics,
+  formatCapacityDuration,
+} from "./capacity";
+import { renderCapacityMetrics } from "./capacity-view";
+import { DeskModal, renderDeskCards } from "./desk";
+import {
+  buildTaskNoteContent,
+  sanitizeTaskFileName,
+  syncTaskNoteContent,
+} from "./task-note";
+import {
+  DeskTask,
+  TaskLogEntry,
+  appendTaskLog,
+  readTaskLogs,
+  resolveDeskTask,
+} from "./log";
 
 const LIST_RE = /^\s*(?:[-*+]|\d+\.)\s+/;
 const CHECK_RE = /^\s*[-*+]\s+\[([ xX])\]\s+/;
@@ -39,6 +62,21 @@ const CHECK_RE = /^\s*[-*+]\s+\[([ xX])\]\s+/;
 /** Persisted data.json shape: settings plus ephemeral POMO state. */
 interface PersistedData extends Partial<NautilusSettings> {
   pomoStartMs?: number | null;
+}
+
+interface TidyUndoState {
+  token: number;
+  file: TFile;
+  blockIndex: number;
+  originalOrder: string[];
+  targetOrder: string[];
+}
+
+interface NautilusSection {
+  index: number;
+  start: number;
+  end: number;
+  tasks: TaskLine[];
 }
 
 function nowMinutes(): number {
@@ -96,6 +134,25 @@ function collectTasks(lines: string[], fromLine: number): TaskLine[] {
   return out;
 }
 
+/** Locate every nautilus fence and the direct list items that belong to it. */
+function nautilusSections(lines: string[]): NautilusSection[] {
+  const out: NautilusSection[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^\s*```nautilus\s*$/.test(lines[i])) continue;
+    let end = i + 1;
+    while (end < lines.length && !/^\s*```\s*$/.test(lines[end])) end++;
+    if (end >= lines.length) continue;
+    out.push({
+      index: out.length,
+      start: i,
+      end,
+      tasks: collectTasks(lines, end + 1),
+    });
+    i = end;
+  }
+  return out;
+}
+
 /** Parse optional per-block overrides from the code fence content. */
 function parseBlockArgs(source: string, base: NautilusSettings): NautilusSettings {
   const s = { ...base };
@@ -131,7 +188,7 @@ function effectiveNow(settings: NautilusSettings): number {
 /* ------------------------------------------------------------------ */
 
 class NautilusBlock extends MarkdownRenderChild {
-  private state = { showDone: true, playing: false };
+  private state = { showDone: true, playing: false, collapsed: false };
   private seq = 0;
   private settings: NautilusSettings;
   private pendings: NautEvent[] = [];
@@ -144,12 +201,14 @@ class NautilusBlock extends MarkdownRenderChild {
   private simMin: number | null = null;
   private rafId: number | null = null;
   private setPointer: ((nowMin: number) => void) | null = null;
+  private disposeChart: (() => void) | null = null;
   /** first line of this block's section, used to pick the primary plan */
   private sectionStart = 0;
   private clockInfo = new Map<number, ClockInterval[]>();
   private openClock: (OpenClock & { description: string }) | null = null;
   private planTasks: ReviewTask[] = [];
   private reviewTasks: ReviewTask[] = [];
+  private deskTasks: DeskTask[] = [];
   private panelTab: PanelTab = "timing";
   private windowMs: [number, number] = [0, 0];
   /** re-render timer while an open CLOCK runs on today's daily note */
@@ -179,12 +238,36 @@ class NautilusBlock extends MarkdownRenderChild {
     return this.isDaily;
   }
 
+  /** Lightweight periodic update: no vault read unless the calendar day changed. */
+  tick(): void {
+    if (this.state.playing) return;
+    if (
+      this.file &&
+      isTodayDailyNote(this.file, this.plugin.settings.dailyNoteFormat) !== this.isDaily
+    ) {
+      void this.refresh();
+      return;
+    }
+    this.renderFrame();
+  }
+
+  async tidy(): Promise<void> {
+    await this.plugin.tidyPlan(
+      this.file,
+      this.getPath(),
+      this.sectionStart,
+      this.settings
+    );
+  }
+
   getSectionStart(): number {
     return this.sectionStart;
   }
 
   onunload(): void {
     this.plugin.blocks.delete(this);
+    this.disposeChart?.();
+    this.disposeChart = null;
     if (this.rafId !== null) window.cancelAnimationFrame(this.rafId);
     if (this.liveTimer !== null) window.clearTimeout(this.liveTimer);
   }
@@ -253,6 +336,7 @@ class NautilusBlock extends MarkdownRenderChild {
     this.clockInfo.clear();
     this.planTasks = [];
     this.reviewTasks = [];
+    this.deskTasks = [];
     const descByLine = new Map<number, string>();
     let todoHueIdx = 0;
     // One arc per CLOCK interval, clipped to the workday window. A running
@@ -289,7 +373,19 @@ class NautilusBlock extends MarkdownRenderChild {
           plannedMinutes: ev.estimate,
         };
         this.reviewTasks.push(rt);
-        if (!ev.done) this.planTasks.push(rt);
+        if (!ev.done) {
+          this.planTasks.push(rt);
+          const logs = readTaskLogs(lines, t);
+          this.deskTasks.push({
+            line: t.line,
+            text: t.text,
+            checked: t.checked,
+            indent: t.indent,
+            description: ev.description,
+            duration: ev.estimate,
+            latestLog: logs[logs.length - 1],
+          });
+        }
         ev.bgColor =
           ev.bgColor ?? TODO_PALETTE[todoHueIdx % TODO_PALETTE.length];
         todoHueIdx++;
@@ -366,8 +462,40 @@ class NautilusBlock extends MarkdownRenderChild {
       ? nowMin
       : this.settings.workdayStart;
 
+    this.disposeChart?.();
+    this.disposeChart = null;
+    this.setPointer = null;
     this.containerEl.empty();
-    const wrap = this.containerEl.createDiv({ cls: "nautilus-container" });
+    const wrap = this.containerEl.createDiv({
+      cls: "nautilus-container" + (this.state.collapsed ? " is-collapsed" : ""),
+    });
+    if (this.state.collapsed) {
+      const collapsed = wrap.createDiv({ cls: "nautilus-collapsed-controls" });
+      this.renderControls(collapsed);
+      return;
+    }
+
+    // Original Nautilus header: current planned/free capacity plus the
+    // remaining and full-day Available / Events budgets.
+    const [windowStart, windowEnd] = workdayWindow(this.settings);
+    const capacityNow =
+      this.isDaily || this.state.playing ? nowMin : this.settings.workdayStart;
+    const capacity = calculateCapacity({
+      startMinutes: windowStart,
+      endMinutes: windowEnd,
+      nowMinutes: capacityNow,
+      fixedEvents: this.pendings.filter((event) => event.meeting && !event.done),
+      allFixedEvents: [...this.pendings, ...this.dones].filter(
+        (event) => event.meeting
+      ),
+      pendingTasks: this.pendings.filter((event) => event.todo && !event.done),
+    });
+    const header = wrap.createDiv({ cls: "nautilus-header" });
+    const headerCopy = header.createDiv({ cls: "nautilus-header-copy" });
+    renderCapacityMetrics(headerCopy, capacityMetrics(capacity));
+    const headerActions = header.createDiv({ cls: "nautilus-header-actions" });
+    this.renderControls(headerActions);
+    this.renderLegend(headerActions);
 
     if (
       this.plugin.settings.executionLayer &&
@@ -412,23 +540,42 @@ class NautilusBlock extends MarkdownRenderChild {
       onProgressClick: (ev) => void this.onProgressClick(ev),
     });
     this.setPointer = rendered.setPointer;
+    this.disposeChart = rendered.destroy;
     wrap.appendChild(rendered.svg);
-    if (rendered.overflow.length > 0) {
-      const names = rendered.overflow.map((e) => e.description).join(", ");
-      wrap.createDiv({
-        cls: "nautilus-overflow",
-        text: `Won't fit today: ${names}`,
-      });
-    }
+    renderDeskCards(wrap, this.deskTasks, (index) => this.openDesk(index));
+    renderPlanPanels(
+      wrap,
+      capacity,
+      [...this.pendings, ...this.dones].filter((event) => event.warning)
+    );
+  }
 
-    // controls live in-flow below the chart so they never overlap the
-    // execution panel or Obsidian's own code-block action buttons
-    const controls = wrap.createDiv({ cls: "nautilus-controls-top" });
+  private openDesk(initialIndex: number): void {
+    if (!this.file) return;
+    const file = this.file;
+    const sectionStart = this.sectionStart;
+    const tasks = this.deskTasks.map((task) => ({ ...task }));
+    new DeskModal(
+      this.plugin.app,
+      `${this.pageTitle} / Nautilus Log`,
+      tasks,
+      initialIndex,
+      {
+        loadLogs: (task) =>
+          this.plugin.readDeskLogs(file, sectionStart, task),
+        appendLog: (task, text) =>
+          this.plugin.appendDeskLog(file, sectionStart, task, text),
+        openTask: (task) => this.plugin.openDeskTask(file, sectionStart, task),
+      }
+    ).open();
+  }
+
+  private renderControls(container: HTMLElement): void {
+    const controls = container.createDiv({ cls: "nautilus-controls-top" });
+    const eyeLabel = this.state.showDone ? "Hide completed" : "Show completed";
     const eyeBtn = controls.createEl("button", {
       cls: "nautilus-toggle-btn",
-      attr: {
-        title: this.state.showDone ? "Hide completed" : "Show completed",
-      },
+      attr: { title: eyeLabel, "aria-label": eyeLabel, type: "button" },
     });
     setIcon(eyeBtn, this.state.showDone ? "eye" : "eye-off");
     eyeBtn.addEventListener("click", () => {
@@ -438,13 +585,68 @@ class NautilusBlock extends MarkdownRenderChild {
     const playBtn = this.plugin.settings.showPlaybackButton
       ? controls.createEl("button", {
           cls: "nautilus-toggle-btn",
-          attr: { title: "Replay the day (hyper-lapse)" },
+          attr: {
+            title: "Replay the day (hyper-lapse)",
+            "aria-label": "Replay the day (hyper-lapse)",
+            type: "button",
+          },
         })
       : null;
     if (playBtn) {
       setIcon(playBtn, "play");
       playBtn.disabled = this.state.playing;
       playBtn.addEventListener("click", () => this.playback());
+    }
+    const tidyBtn = controls.createEl("button", {
+      cls: "nautilus-toggle-btn",
+      attr: {
+        title: "Tidy completed and elapsed items",
+        "aria-label": "Tidy completed and elapsed items",
+        type: "button",
+      },
+    });
+    setIcon(tidyBtn, "brush-cleaning");
+    tidyBtn.addEventListener("click", () => {
+      tidyBtn.disabled = true;
+      void this.tidy().finally(() => {
+        if (tidyBtn.isConnected) tidyBtn.disabled = false;
+      });
+    });
+    const collapseLabel = this.state.collapsed
+      ? "Expand Nautilus Log"
+      : "Collapse Nautilus Log";
+    const collapseBtn = controls.createEl("button", {
+      cls: "nautilus-toggle-btn",
+      attr: {
+        title: collapseLabel,
+        "aria-label": collapseLabel,
+        "aria-expanded": String(!this.state.collapsed),
+        type: "button",
+      },
+    });
+    setIcon(collapseBtn, this.state.collapsed ? "chevron-down" : "chevron-up");
+    collapseBtn.addEventListener("click", () => {
+      this.state.collapsed = !this.state.collapsed;
+      this.renderFrame();
+    });
+  }
+
+  private renderLegend(container: HTMLElement): void {
+    const legend = container.createDiv({
+      cls: "nautilus-html-legend",
+      attr: { "aria-label": "Nautilus Log legend" },
+    });
+    for (const [tone, label] of [
+      ["urgent", "Urgent"],
+      ["event", "Event"],
+      ["task", "Task"],
+    ]) {
+      const item = legend.createSpan({ cls: "nautilus-legend-item" });
+      item.createEl("i", {
+        cls: `nautilus-legend-dot nautilus-legend-dot--${tone}`,
+        attr: { "aria-hidden": "true" },
+      });
+      item.appendText(label);
     }
   }
 
@@ -487,6 +689,52 @@ class NautilusBlock extends MarkdownRenderChild {
   }
 }
 
+function renderPlanPanels(
+  container: HTMLElement,
+  capacity: Capacity,
+  warnings: NautEvent[]
+): void {
+  const overflow = capacity.overflowTasks;
+  if (overflow.length > 0) {
+    const details = container.createEl("details", {
+      cls: "nautilus-overflow-panel",
+    });
+    details.createEl("summary", {
+      text: `Unscheduled today · ${formatCapacityDuration(
+        capacity.unplacedMinutes
+      )} · ${overflow.length} ${overflow.length === 1 ? "item" : "items"}`,
+    });
+    const list = details.createEl("ul");
+    for (const task of overflow) {
+      const item = list.createEl("li");
+      item.createSpan({ text: task.description });
+      item.createSpan({
+        cls: "nautilus-overflow-duration",
+        text: formatCapacityDuration(task.duration),
+      });
+    }
+  }
+  if (warnings.length > 0) {
+    const details = container.createEl("details", {
+      cls: "nautilus-warning-panel",
+    });
+    details.createEl("summary", {
+      text: `Schedule warnings · ${warnings.length} ${
+        warnings.length === 1 ? "item" : "items"
+      }`,
+    });
+    const list = details.createEl("ul");
+    for (const event of warnings) {
+      const item = list.createEl("li");
+      item.createSpan({ text: event.description });
+      item.createSpan({
+        cls: "nautilus-warning-message",
+        text: event.warning ?? "",
+      });
+    }
+  }
+}
+
 /* ------------------------------------------------------------------ */
 
 export default class NautilusLogPlugin extends Plugin {
@@ -494,6 +742,10 @@ export default class NautilusLogPlugin extends Plugin {
   blocks: Set<NautilusBlock> = new Set();
   /** standalone POMO start (epoch ms); null when not running */
   pomoStartMs: number | null = null;
+  private tidyUndoStates = new Map<string, TidyUndoState>();
+  private deskMutationPaths = new Set<string>();
+  private tidySequence = 0;
+  private tidyBusyPaths = new Set<string>();
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -520,10 +772,17 @@ export default class NautilusLogPlugin extends Plugin {
     this.registerEvent(
       this.app.vault.on("rename", () => this.refreshAll())
     );
-    // keep the now-pointer moving even without edits
+    // Vault edits refresh immediately. Routine ticks only rebuild from the
+    // parsed in-memory plan; a slow recovery pass reconciles external drift.
     this.registerInterval(
-      window.setInterval(() => this.refreshAll(), 30_000)
+      window.setInterval(() => this.tickBlocks(), 30_000)
     );
+    this.registerInterval(
+      window.setInterval(() => this.refreshAll(), 5 * 60_000)
+    );
+    this.registerDomEvent(document, "visibilitychange", () => {
+      if (document.visibilityState === "visible") this.refreshAll();
+    });
     // 1s ticker for the execution panel's elapsed labels
     this.registerInterval(
       window.setInterval(() => {
@@ -552,6 +811,30 @@ export default class NautilusLogPlugin extends Plugin {
         const file = view.file;
         if (!file) return;
         void this.clockToggleLine(file, editor.getCursor().line);
+      },
+    });
+
+    this.addCommand({
+      id: "nautilus-tidy-primary-plan",
+      name: "Tidy primary plan",
+      callback: () => {
+        const primary = this.primaryBlock();
+        if (primary) {
+          void primary.tidy();
+          return;
+        }
+        const today = formatDate(
+          new Date(),
+          this.settings.dailyNoteFormat || "YYYY-MM-DD"
+        );
+        const folder = this.settings.dailyNotesFolder.replace(/^\/|\/$/g, "");
+        const path = folder ? `${folder}/${today}.md` : `${today}.md`;
+        const file = this.app.vault.getAbstractFileByPath(path);
+        if (file instanceof TFile) {
+          void this.tidyPlan(file, file.path, null, this.settings);
+        } else {
+          new Notice(`Nautilus Log: daily note not found at ${path}`);
+        }
       },
     });
 
@@ -643,18 +926,256 @@ export default class NautilusLogPlugin extends Plugin {
     this.refreshAll();
   }
 
+  /**
+   * Move settled direct-child blocks to the front without rewriting their
+   * contents. sectionStart identifies a rendered block; null selects the
+   * first block for the command palette fallback.
+   */
+  async tidyPlan(
+    file: TFile | null,
+    path: string,
+    sectionStart: number | null,
+    settings: NautilusSettings
+  ): Promise<void> {
+    const f = file ?? this.app.vault.getAbstractFileByPath(path);
+    if (!(f instanceof TFile) || this.tidyBusyPaths.has(f.path)) return;
+    this.tidyBusyPaths.add(f.path);
+    try {
+      const lines = (await this.app.vault.read(f)).split("\n");
+      const sections = nautilusSections(lines);
+      const section =
+        sectionStart === null
+          ? sections[0]
+          : sections.find((candidate) => candidate.start === sectionStart);
+      if (!section || section.tasks.length === 0) {
+        new Notice("Nautilus Log: no plan items found to tidy.");
+        return;
+      }
+      const sectionSettings = parseBlockArgs(
+        lines.slice(section.start + 1, section.end).join("\n"),
+        settings
+      );
+      const running = findOpenClock(lines);
+      const edit = createTidyEdit(
+        lines,
+        section.tasks,
+        settledTaskLines(section.tasks, sectionSettings, nowMinutes()),
+        running?.taskLine ?? null
+      );
+      const key = `${f.path}:${section.index}`;
+      if (edit.count === 0) {
+        this.tidyUndoStates.delete(key);
+        new Notice("Nautilus Log: plan is already tidy.");
+        return;
+      }
+
+      const token = ++this.tidySequence;
+      await this.app.vault.modify(f, edit.lines.join("\n"));
+      this.tidyUndoStates.set(key, {
+        token,
+        file: f,
+        blockIndex: section.index,
+        originalOrder: edit.originalOrder,
+        targetOrder: edit.targetOrder,
+      });
+      this.showTidyNotice(key, token, edit.count);
+    } catch (error) {
+      console.error("[Nautilus Log] Tidy failed", error);
+      new Notice("Nautilus Log: tidy could not be completed.");
+    } finally {
+      this.tidyBusyPaths.delete(f.path);
+    }
+  }
+
+  private showTidyNotice(key: string, token: number, count: number): void {
+    const fragment = createFragment();
+    const row = fragment.createDiv({ cls: "nautilus-tidy-notice" });
+    row.createSpan({
+      text: `Tidied ${count} ${count === 1 ? "item" : "items"}.`,
+    });
+    const undo = row.createEl("button", {
+      cls: "nautilus-tidy-undo",
+      text: "Undo",
+      attr: { "aria-label": "Undo plan tidy" },
+    });
+    let notice: Notice | null = null;
+    undo.addEventListener("click", () => {
+      notice?.hide();
+      void this.undoTidy(key, token);
+    });
+    notice = new Notice(fragment, 10_000);
+  }
+
+  private async undoTidy(key: string, token: number): Promise<void> {
+    const state = this.tidyUndoStates.get(key);
+    if (!state || state.token !== token) return;
+    try {
+      const lines = (await this.app.vault.read(state.file)).split("\n");
+      const section = nautilusSections(lines)[state.blockIndex];
+      const restored = section
+        ? restoreTidyEdit(
+            lines,
+            section.tasks,
+            state.originalOrder,
+            state.targetOrder
+          )
+        : null;
+      if (!restored) {
+        this.tidyUndoStates.delete(key);
+        new Notice(
+          "Nautilus Log: the plan changed after Tidy, so Undo was not applied."
+        );
+        return;
+      }
+      await this.app.vault.modify(state.file, restored.join("\n"));
+      this.tidyUndoStates.delete(key);
+      new Notice("Nautilus Log: tidy undone.");
+    } catch (error) {
+      console.error("[Nautilus Log] Tidy undo failed", error);
+      new Notice("Nautilus Log: tidy could not be undone.");
+    }
+  }
+
+  private deskTaskInLines(
+    lines: string[],
+    sectionStart: number,
+    expected: DeskTask
+  ): TaskLine | null {
+    const section = nautilusSections(lines).find(
+      (candidate) => candidate.start === sectionStart
+    );
+    return section ? resolveDeskTask(section.tasks, expected) : null;
+  }
+
+  async readDeskLogs(
+    file: TFile,
+    sectionStart: number,
+    expected: DeskTask
+  ): Promise<TaskLogEntry[]> {
+    const lines = (await this.app.vault.read(file)).split("\n");
+    const task = this.deskTaskInLines(lines, sectionStart, expected);
+    return task ? readTaskLogs(lines, task) : [];
+  }
+
+  async appendDeskLog(
+    file: TFile,
+    sectionStart: number,
+    expected: DeskTask,
+    text: string
+  ): Promise<TaskLogEntry | null> {
+    if (this.deskMutationPaths.has(file.path)) return null;
+    this.deskMutationPaths.add(file.path);
+    try {
+      const lines = (await this.app.vault.read(file)).split("\n");
+      const task = this.deskTaskInLines(lines, sectionStart, expected);
+      if (!task) return null;
+      const edit = appendTaskLog(lines, task, text, new Date());
+      await this.app.vault.modify(file, edit.lines.join("\n"));
+      await this.syncDeskTaskNote(file, edit.lines, {
+        ...expected,
+        ...task,
+        description: expected.description,
+      });
+      return edit.entry;
+    } catch (error) {
+      console.error("[Nautilus Log] Desk mutation failed", error);
+      return null;
+    } finally {
+      this.deskMutationPaths.delete(file.path);
+    }
+  }
+
+  private deskTaskNotePath(task: DeskTask): string {
+    const rawFolder = this.settings.taskNotesFolder.trim();
+    const folder = normalizePath(rawFolder)
+      .replace(/^\/+|\/+$/g, "")
+      .split("/")
+      .filter((part) => part && part !== "." && part !== "..")
+      .join("/");
+    return `${folder ? `${folder}/` : ""}${sanitizeTaskFileName(
+      task.description
+    )}.md`;
+  }
+
+  private async syncDeskTaskNote(
+    sourceFile: TFile,
+    sourceLines: string[],
+    task: DeskTask
+  ): Promise<void> {
+    const notePath = this.deskTaskNotePath(task);
+    const note = this.app.vault.getAbstractFileByPath(notePath);
+    if (!(note instanceof TFile) || note.path === sourceFile.path) return;
+    try {
+      const existing = await this.app.vault.read(note);
+      const updated = syncTaskNoteContent(existing, sourceLines, task);
+      if (updated !== existing) await this.app.vault.modify(note, updated);
+    } catch (error) {
+      // The source LOG is already durable; never make a sync failure look like
+      // a failed source write or retry it into a duplicate LOG entry.
+      console.error("[Nautilus Log] Task note sync failed", error);
+      new Notice(`Nautilus Log: log saved, but ${notePath} could not be synced.`);
+    }
+  }
+
+  async openDeskTask(
+    file: TFile,
+    sectionStart: number,
+    expected: DeskTask
+  ): Promise<void> {
+    try {
+      const notePath = this.deskTaskNotePath(expected);
+      const existing = this.app.vault.getAbstractFileByPath(notePath);
+      if (existing instanceof TFile) {
+        await this.app.workspace.getLeaf("tab").openFile(existing);
+        return;
+      }
+      if (existing) {
+        new Notice(`Nautilus Log: ${notePath} is not a Markdown file.`);
+        return;
+      }
+
+      let currentFolder = "";
+      const folder = notePath.split("/").slice(0, -1).join("/");
+      for (const part of folder.split("/").filter(Boolean)) {
+        currentFolder = currentFolder ? `${currentFolder}/${part}` : part;
+        const child = this.app.vault.getAbstractFileByPath(currentFolder);
+        if (child instanceof TFolder) continue;
+        if (child) throw new Error(`${currentFolder} is not a folder.`);
+        await this.app.vault.createFolder(currentFolder);
+      }
+
+      const lines = (await this.app.vault.read(file)).split("\n");
+      const task = this.deskTaskInLines(lines, sectionStart, expected);
+      if (!task) {
+        new Notice("Nautilus Log: the task could not be located in the note.");
+        return;
+      }
+      const content = buildTaskNoteContent(lines, {
+        ...expected,
+        ...task,
+        description: expected.description,
+      });
+      const note = await this.app.vault.create(notePath, content);
+      await this.app.workspace.getLeaf("tab").openFile(note);
+    } catch (error) {
+      console.error("[Nautilus Log] Could not create task note", error);
+      new Notice("Nautilus Log: the task note could not be created.");
+    }
+  }
+
   /** All nautilus-block task lines of a file's content. */
   private tasksOfFile(lines: string[]): TaskLine[] {
-    const out: TaskLine[] = [];
-    for (let i = 0; i < lines.length; i++) {
-      if (!/^\s*```nautilus\s*$/.test(lines[i])) continue;
-      let end = i + 1;
-      while (end < lines.length && !/^\s*```\s*$/.test(lines[end])) end++;
-      if (end >= lines.length) continue;
-      out.push(...collectTasks(lines, end + 1));
-      i = end;
+    return nautilusSections(lines).flatMap((section) => section.tasks);
+  }
+
+  private tickBlocks(): void {
+    for (const block of [...this.blocks]) {
+      if (!block.containerEl.isConnected) {
+        this.blocks.delete(block);
+        continue;
+      }
+      block.tick();
     }
-    return out;
   }
 
   refreshAll(path?: string): void {
@@ -840,6 +1361,15 @@ class NautilusSettingTab extends PluginSettingTab {
           type: "text",
           key: "dailyNotesFolder",
           placeholder: "Daily",
+        },
+      },
+      {
+        name: "Task notes folder",
+        desc: "Folder for notes created from Desk cards. Existing notes open without being overwritten. Default: Nautilus; empty = vault root.",
+        control: {
+          type: "text",
+          key: "taskNotesFolder",
+          placeholder: "Nautilus",
         },
       },
       {

@@ -17,6 +17,11 @@ import {
 } from "../src/timing";
 import { minToAngle, posSweepAngle, angleToRad, iterateRectPlace, spiralProfileIndex, spiralCellInnerIndex } from "../src/geometry";
 import { formatDate, parseDateStrict } from "../src/datefmt";
+import { createTidyEdit, restoreTidyEdit, settledTaskLines } from "../src/tidy";
+import { calculateCapacity, capacityMetrics } from "../src/capacity";
+import { availableSlotGroups, pastTimelineSegments, pastUnplannedSegments } from "../src/timeline";
+import { appendTaskLog, readTaskLogs, resolveDeskTask } from "../src/log";
+import { buildTaskNoteContent, sanitizeTaskFileName, syncTaskNoteContent } from "../src/task-note";
 
 let failures = 0;
 function eq(name: string, got: unknown, want: unknown) {
@@ -72,6 +77,10 @@ const e9 = parseRowParams("Ship it [[Project X]] **today**", false, 8, S)!;
 eq("wiki/bold strip", e9.description, "Ship it Project X today");
 
 eq("empty desc skipped", parseRowParams("30m", false, 9, S), null);
+const overnightRange = parseRowParams("22:00-02:00 Night", false, 9, S)!;
+eq("overnight range stays continuous", [overnightRange.start, overnightRange.end, overnightRange.warning], [1320, 1560, "Continues into the next day"]);
+const sameTimeRange = parseRowParams("10:00-10:00 Invalid", false, 9, S)!;
+eq("same-time range carries warning", [sameTimeRange.start, sameTimeRange.end, sameTimeRange.warning], [600, 600, "Start and end times cannot be the same"]);
 
 // ---- bumpProgressInLine ----
 eq("start progress", bumpProgressInLine("- [ ] Task", 10, 600), "- [ ] Task d10%");
@@ -139,6 +148,22 @@ eq(
     ["free", 860, 1320],
   ]
 );
+
+const exactFit = fillDay(
+  addStartAfter([
+    mk({ description: "exact", duration: 60 }),
+    mk({ description: "mtg", meeting: true, todo: false, start: 660, end: 720 }),
+  ]),
+  600,
+  1200,
+  600
+);
+eq("task exactly filling a gap is schedulable", exactFit.overflow, []);
+eq("exact-fit task uses the whole gap", [
+  exactFit.scheduled[0].description,
+  exactFit.scheduled[0].start,
+  exactFit.scheduled[0].end,
+], ["exact", 600, 660]);
 
 // todoB would fit before the meeting only if startAfter allows
 const day2 = fillDay(
@@ -387,6 +412,265 @@ const D = (h: number, m: number) => new Date(2026, 7, 26, h, m, 0, 0);
   );
   eq("paused task state", review.rows[0].state, "paused");
   eq("paused task variance", review.rows[0].varianceMinutes, 20);
+}
+
+// ---- Desk task notes ----
+eq("task note filename removes reserved characters", sanitizeTaskFileName("A/B: Test?"), "A-B- Test");
+eq("task note filename has a fallback", sanitizeTaskFileName("???"), "Untitled task");
+{
+  const task = { ...tl(0, "Write report 45m", false), description: "Write report", duration: 45 };
+  const lines = [
+    "- [ ] Write report 45m",
+    "  - LOG: [2026-08-26 Wed 10:05] Completed outline",
+    "  - CLOCK: [2026-08-26 Wed 09:00]",
+  ];
+  eq("task note lists only LOG and CLOCK above a writing divider", buildTaskNoteContent(lines, task), [
+    "- LOG: [2026-08-26 Wed 10:05] Completed outline",
+    "- CLOCK: [2026-08-26 Wed 09:00]",
+    "",
+    "---",
+    "",
+    "",
+  ].join("\n"));
+  eq("task note sync preserves user content below the divider", syncTaskNoteContent(
+    "- LOG: [old] Old entry\n\n---\n\nMy detailed notes\n- keep this\n",
+    [...lines, "  - LOG: [2026-08-26 Wed 10:06] New entry"],
+    task
+  ), [
+    "- LOG: [2026-08-26 Wed 10:05] Completed outline",
+    "- CLOCK: [2026-08-26 Wed 09:00]",
+    "- LOG: [2026-08-26 Wed 10:06] New entry",
+    "",
+    "---",
+    "\nMy detailed notes\n- keep this\n",
+  ].join("\n"));
+}
+
+// ---- Desk MVP: task-bound LOG entries and safe task resolution ----
+{
+  const task = tl(0, "Write report 45m", false);
+  const lines = [
+    "- [ ] Write report 45m",
+    "  - CLOCK: [2026-08-26 Wed 09:00]--[2026-08-26 Wed 09:20] => 0:20",
+    "- [ ] Next task 30m",
+  ];
+  const edit = appendTaskLog(lines, task, "Completed outline", D(10, 5));
+  eq("Desk log appends after existing task children", edit.lines, [
+    "- [ ] Write report 45m",
+    "  - CLOCK: [2026-08-26 Wed 09:00]--[2026-08-26 Wed 09:20] => 0:20",
+    "  - LOG: [2026-08-26 Wed 10:05] Completed outline",
+    "- [ ] Next task 30m",
+  ]);
+  eq("Desk log can be read back", readTaskLogs(edit.lines, task).map((entry) => entry.text), ["Completed outline"]);
+  const next = tl(3, "Next task 30m", false);
+  eq("Desk log inserts under a childless task", appendTaskLog(edit.lines, next, "Started", D(10, 6)).lines[4], "  - LOG: [2026-08-26 Wed 10:06] Started");
+  eq("Desk resolves a moved task by its content", resolveDeskTask(
+    [tl(0, "Another task", false), tl(1, "Write report 45m", false)],
+    task
+  )?.line, 1);
+  eq("Desk rejects ambiguous duplicate tasks", resolveDeskTask(
+    [tl(0, "Write report 45m", false), tl(1, "Write report 45m", false)],
+    tl(5, "Write report 45m", false)
+  ), null);
+}
+
+// ---- timeline overlays and available-slot projections ----
+eq("past timeline follows hourly cells", pastTimelineSegments(300, 600, 450), [
+  { start: 300, end: 360 },
+  { start: 360, end: 420 },
+  { start: 420, end: 450 },
+]);
+eq("past timeline is empty before start", pastTimelineSegments(300, 600, 300), []);
+eq("past unplanned gaps exclude occupied intervals", pastUnplannedSegments({
+  startMinutes: 300,
+  endMinutes: 600,
+  nowMinutes: 450,
+  occupiedEvents: [mk({ start: 330, end: 390 })],
+}), [
+  { start: 300, end: 330 },
+  { start: 390, end: 420 },
+  { start: 420, end: 450 },
+]);
+const slots = availableSlotGroups({
+  events: [
+    mk({ freetime: true, todo: false, start: 300, end: 420 }),
+    mk({ freetime: true, todo: false, start: 480, end: 600 }),
+  ],
+  startMinutes: 300,
+  endMinutes: 600,
+  nowMinutes: 360,
+  clampToNow: true,
+});
+eq("available slots clamp to now", slots.map((slot) => [slot.start, slot.end, slot.availableNow]), [
+  [360, 420, true],
+  [480, 600, false],
+]);
+eq("available slots split at hour boundaries", slots[0].segments, [
+  { start: 360, end: 420 },
+]);
+
+// ---- capacity header: remaining time, full-day ratios, and semantic tones ----
+{
+  const result = calculateCapacity({
+    startMinutes: 300,
+    endMinutes: 1440,
+    nowMinutes: 600,
+    fixedEvents: [
+      mk({ meeting: true, todo: false, start: 660, end: 720 }),
+      mk({ meeting: true, todo: false, start: 700, end: 750 }),
+      mk({ meeting: true, todo: false, start: 500, end: 630 }),
+    ],
+    allFixedEvents: [
+      mk({ meeting: true, todo: false, done: true, start: 360, end: 420 }),
+      mk({ meeting: true, todo: false, start: 660, end: 720 }),
+      mk({ meeting: true, todo: false, start: 700, end: 750 }),
+      mk({ meeting: true, todo: false, start: 500, end: 630 }),
+    ],
+    pendingTasks: [
+      mk({ duration: 120 }),
+      mk({ duration: 60 }),
+    ],
+  });
+  eq("capacity subtracts merged future events", [result.availableMinutes, result.fixedMinutes], [720, 120]);
+  eq("capacity sums remaining task demand", result.demandMinutes, 180);
+  eq("capacity keeps full-day totals", [result.totalAvailableMinutes, result.totalFixedMinutes], [860, 280]);
+
+  const screenshotCapacity = {
+    availableMinutes: 660,
+    totalAvailableMinutes: 660,
+    fixedMinutes: 300,
+    totalFixedMinutes: 300,
+    demandMinutes: 195,
+    overloadMinutes: 0,
+    slackMinutes: 465,
+    unplacedMinutes: 0,
+    scheduledTasks: [],
+    overflowTasks: [],
+    burningBucket: null,
+  };
+  const screenshot = capacityMetrics(screenshotCapacity);
+  eq("screenshot planned / free / left", [
+    screenshot.planned.value,
+    screenshot.planned.summaryLabel,
+    screenshot.status.value,
+    screenshot.status.summaryLabel,
+    screenshot.planned.percent,
+    screenshot.planned.percentLabel,
+  ], ["3h15m", "planned", "7h45m", "free", "70%", "left"]);
+  eq("screenshot available and event totals", [
+    screenshot.available.value,
+    screenshot.available.total,
+    screenshot.events.value,
+    screenshot.events.total,
+  ], ["11h", "11h", "5h", "5h"]);
+  eq("positive free and left use semantic color", [screenshot.status.tone, screenshot.planned.percentTone], ["positive", "positive"]);
+
+  const overloaded = capacityMetrics({
+    ...screenshotCapacity,
+    availableMinutes: 90,
+    demandMinutes: 105,
+    overloadMinutes: 15,
+    slackMinutes: 0,
+  });
+  eq("overload uses warning tone", [overloaded.status.tone, overloaded.planned.percentTone], ["warning", "warning"]);
+  const tiny = capacityMetrics({
+    ...screenshotCapacity,
+    availableMinutes: 2,
+    totalAvailableMinutes: 660,
+    demandMinutes: 0,
+    slackMinutes: 2,
+  });
+  eq("tiny positive capacity never rounds to zero", tiny.planned.percent, "1%");
+}
+{
+  const fragmented = calculateCapacity({
+    startMinutes: 300,
+    endMinutes: 420,
+    nowMinutes: 300,
+    fixedEvents: [
+      mk({ meeting: true, todo: false, start: 330, end: 360 }),
+      mk({ meeting: true, todo: false, start: 390, end: 420 }),
+    ],
+    pendingTasks: [mk({ duration: 45 })],
+  });
+  eq("atomic task reports fragmented capacity", [fragmented.overloadMinutes, fragmented.unplacedMinutes], [0, 45]);
+}
+
+// ---- Tidy: stable ordering, complete blocks, and conflict-safe Undo ----
+{
+  const lines = [
+    "- [ ] Active A 30m",
+    "  - CLOCK: [2026-08-26 Wed 08:00]--[2026-08-26 Wed 08:10] => 0:10",
+    "- [x] Done A 30m d09:00",
+    "- 08:00-09:00 Past event",
+    "- ---",
+    "- [ ] Active B 30m",
+    "- 20:00-21:00 Future event",
+  ];
+  const tasks = [
+    tl(0, "Active A 30m", false),
+    tl(2, "Done A 30m d09:00", true),
+    tl(3, "08:00-09:00 Past event", null),
+    tl(4, "---", null),
+    tl(5, "Active B 30m", false),
+    tl(6, "20:00-21:00 Future event", null),
+  ];
+  const edit = createTidyEdit(lines, tasks, new Set([2, 3]));
+  eq("Tidy moves two settled items", edit.count, 2);
+  eq("Tidy is stable and keeps descendants attached", edit.lines, [
+    "- [x] Done A 30m d09:00",
+    "- 08:00-09:00 Past event",
+    "- [ ] Active A 30m",
+    "  - CLOCK: [2026-08-26 Wed 08:00]--[2026-08-26 Wed 08:10] => 0:10",
+    "- ---",
+    "- [ ] Active B 30m",
+    "- 20:00-21:00 Future event",
+  ]);
+  const tidiedTasks = [
+    tl(0, "Done A 30m d09:00", true),
+    tl(1, "08:00-09:00 Past event", null),
+    tl(2, "Active A 30m", false),
+    tl(4, "---", null),
+    tl(5, "Active B 30m", false),
+    tl(6, "20:00-21:00 Future event", null),
+  ];
+  eq("Tidy is idempotent", createTidyEdit(edit.lines, tidiedTasks, new Set([0, 1])).count, 0);
+  eq("Undo restores the original complete blocks", restoreTidyEdit(
+    edit.lines,
+    tidiedTasks,
+    edit.originalOrder,
+    edit.targetOrder
+  ), lines);
+  const changed = [...edit.lines];
+  changed[5] = "- [ ] Active B edited 30m";
+  eq("Undo refuses to overwrite a later plan edit", restoreTidyEdit(
+    changed,
+    tidiedTasks,
+    edit.originalOrder,
+    edit.targetOrder
+  ), null);
+
+  const running = createTidyEdit(lines, tasks, new Set([2, 3]), 2);
+  eq("Tidy never moves the running task", running.lines, [
+    "- 08:00-09:00 Past event",
+    "- [ ] Active A 30m",
+    "  - CLOCK: [2026-08-26 Wed 08:00]--[2026-08-26 Wed 08:10] => 0:10",
+    "- [x] Done A 30m d09:00",
+    "- ---",
+    "- [ ] Active B 30m",
+    "- 20:00-21:00 Future event",
+  ]);
+}
+{
+  const nightSettings = { ...S, workdayStart: 1200, workdayEnd: 120 };
+  const nightTasks = [
+    tl(0, "01:00-02:00 Ended overnight event", null),
+    tl(1, "03:00-04:00 Later event", null),
+    tl(2, "Completed task 30m", true),
+  ];
+  eq("Tidy aligns elapsed events to overnight windows", [
+    ...settledTaskLines(nightTasks, nightSettings, 120),
+  ], [0, 2]);
 }
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURES`);

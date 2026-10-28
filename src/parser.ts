@@ -38,7 +38,11 @@ const RANGE_RE =
   /(?:\d{1,2}(?::\d{1,2})?(?:\s*(?:\s?AM|\s?PM|\s?am|\s?pm))?)\s*(?:-|–|—|~|až|to)\s*(?:\d{1,2}(?::\d{1,2})?(?:\s*(?:\s?AM|\s?PM|\s?am|\s?pm))?)/;
 const RANGE_SPLIT_RE = /(.*)(?:-|–|—|~|až|to)(.*)/;
 
-export function parseTimeRange(s: string): { range: [number, number] | null; cleaned: string } {
+export function parseTimeRange(s: string): {
+  range: [number, number] | null;
+  cleaned: string;
+  warning?: string;
+} {
   const m = s.match(RANGE_RE);
   if (!m) return { range: null, cleaned: s };
   const rangeStr = m[0];
@@ -52,9 +56,16 @@ export function parseTimeRange(s: string): { range: [number, number] | null; cle
   const cleaned = s.replace(rangeStr, "").replace(/\s\s/, " ");
   const [toMin, h12] = toMinutes(parts[2], null);
   const [fromMin] = toMinutes(parts[1], h12);
+  const sameTime = toMin === fromMin;
+  const overnight = toMin < fromMin;
   return {
-    range: toMin > fromMin ? [fromMin, toMin] : [fromMin, fromMin],
+    range: [fromMin, overnight ? toMin + 1440 : toMin],
     cleaned,
+    ...(sameTime
+      ? { warning: "Start and end times cannot be the same" }
+      : overnight
+      ? { warning: "Continues into the next day" }
+      : {}),
   };
 }
 
@@ -219,6 +230,7 @@ export function parseRowParams(
     todo: !isMeeting,
     freetime: false,
     startAfter: 0,
+    ...(tr.warning ? { warning: tr.warning } : {}),
   };
 }
 
