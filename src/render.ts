@@ -168,15 +168,11 @@ class ChartTooltip {
     this.hide();
     const svg = target.ownerSVGElement;
     if (!svg) return;
-    const el = document.createElement("div");
+    const el = createEl("div", { cls: "nautilus-hover-tooltip" });
     el.id = this.id;
-    el.className = "nautilus-hover-tooltip";
     el.setAttribute("role", "tooltip");
-    const title = document.createElement("strong");
-    title.textContent = info.title;
-    const meta = document.createElement("span");
-    meta.textContent = info.meta;
-    el.append(title, meta);
+    el.createEl("strong", { text: info.title });
+    el.createEl("span", { text: info.meta });
     document.body.appendChild(el);
     this.el = el;
     this.owner = target;

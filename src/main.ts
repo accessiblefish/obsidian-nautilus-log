@@ -1165,7 +1165,10 @@ export default class NautilusLogPlugin extends Plugin {
 
   /** All nautilus-block task lines of a file's content. */
   private tasksOfFile(lines: string[]): TaskLine[] {
-    return nautilusSections(lines).flatMap((section) => section.tasks);
+    return nautilusSections(lines).reduce<TaskLine[]>(
+      (all, section) => all.concat(section.tasks),
+      []
+    );
   }
 
   private tickBlocks(): void {

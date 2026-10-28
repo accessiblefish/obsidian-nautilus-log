@@ -81,13 +81,17 @@ export function pastUnplannedSegments({
   if (cursor < elapsedEnd) gaps.push([cursor, elapsedEnd]);
 
   const cells = pastTimelineSegments(startMinutes, endMinutes, elapsedEnd);
-  return gaps.flatMap(([gapStart, gapEnd]) =>
-    cells
-      .map((cell) => ({
-        start: Math.max(gapStart, cell.start),
-        end: Math.min(gapEnd, cell.end),
-      }))
-      .filter((segment) => segment.end > segment.start)
+  return gaps.reduce<TimeSegment[]>(
+    (segments, [gapStart, gapEnd]) =>
+      segments.concat(
+        cells
+          .map((cell) => ({
+            start: Math.max(gapStart, cell.start),
+            end: Math.min(gapEnd, cell.end),
+          }))
+          .filter((segment) => segment.end > segment.start)
+      ),
+    []
   );
 }
 
@@ -131,10 +135,10 @@ export function availableSlotGroups({
         return end > start ? [start, end] : null;
       })
   );
-  return freeIntervals.flatMap(([slotStart, slotEnd]) => {
+  return freeIntervals.reduce<AvailableSlot[]>((slots, [slotStart, slotEnd]) => {
     const visibleStart = clampToNow ? Math.max(slotStart, cursor) : slotStart;
-    if (slotEnd <= visibleStart) return [];
-    return [{
+    if (slotEnd <= visibleStart) return slots;
+    slots.push({
       key: `slot:${visibleStart}:${slotEnd}`,
       start: visibleStart,
       end: slotEnd,
@@ -142,6 +146,7 @@ export function availableSlotGroups({
       availableNow:
         clampToNow && nowMinutes >= slotStart && nowMinutes < slotEnd,
       segments: splitAtHourBoundaries(visibleStart, slotEnd),
-    }];
-  });
+    });
+    return slots;
+  }, []);
 }

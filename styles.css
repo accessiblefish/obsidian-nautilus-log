@@ -34,7 +34,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
-  column-gap: 24px;
+  gap: 24px;
   width: 100%;
   max-width: 600px;
   min-height: 54px;
@@ -123,7 +123,7 @@
   display: grid;
   grid-template-columns: repeat(2, max-content);
   align-items: baseline;
-  column-gap: 28px;
+  gap: 28px;
 }
 
 .nautilus-metric-summary-item,
@@ -201,7 +201,7 @@
   }
 
   .nautilus-metrics-capacity {
-    column-gap: 14px;
+    gap: 14px;
   }
 }
 
@@ -876,7 +876,7 @@
 
 @media (max-width: 520px) {
   .nautilus-header {
-    column-gap: 8px;
+    gap: 8px;
   }
 
   .nautilus-html-legend {

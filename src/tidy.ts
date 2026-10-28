@@ -129,7 +129,12 @@ export function createTidyEdit(
   const endLine = lastTask.line + lastHeight;
   const nextLines = lines
     .slice(0, firstLine)
-    .concat(targetOrder.flatMap((block) => (block === "" ? [] : block.split("\n"))))
+    .concat(
+      targetOrder.reduce<string[]>(
+        (expanded, block) => expanded.concat(block === "" ? [] : block.split("\n")),
+        []
+      )
+    )
     .concat(lines.slice(endLine));
   return { lines: nextLines, originalOrder, targetOrder, count };
 }
@@ -161,6 +166,11 @@ export function restoreTidyEdit(
   const endLine = lastTask.line + (lastBlock === "" ? 0 : lastBlock.split("\n").length);
   return lines
     .slice(0, firstLine)
-    .concat(originalOrder.flatMap((block) => (block === "" ? [] : block.split("\n"))))
+    .concat(
+      originalOrder.reduce<string[]>(
+        (expanded, block) => expanded.concat(block === "" ? [] : block.split("\n")),
+        []
+      )
+    )
     .concat(lines.slice(endLine));
 }
