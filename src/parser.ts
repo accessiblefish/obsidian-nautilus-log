@@ -291,6 +291,17 @@ function checkBox(line: string): string {
   return line.replace(/^(\s*[-*+]\s+)\[ \]/, "$1[x]");
 }
 
+/**
+ * Check off any list item: existing checkboxes flip to `[x]`; plain bullets
+ * (typical for meetings) gain a checked box. Ordered items keep their number.
+ */
+export function checkListItem(line: string): string {
+  if (/^\s*[-*+]\s+\[[ xX]\]/.test(line)) {
+    return line.replace(/^(\s*[-*+]\s+)\[[ xX]\]/, "$1[x]");
+  }
+  return line.replace(/^(\s*(?:[-*+]|\d+\.)\s+)/, "$1[x] ");
+}
+
 function uncheckBox(line: string): string {
   return line.replace(/^(\s*[-*+]\s+)\[[xX]\]/, "$1[ ]");
 }

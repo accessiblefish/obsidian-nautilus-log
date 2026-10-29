@@ -14,7 +14,9 @@ import {
 import { DEFAULT_SETTINGS, NautEvent, NautilusSettings, workdayWindow } from "./types";
 import {
   bumpProgressInLine,
+  checkListItem,
   fixTaskLines,
+  minutesToTime,
   parseRowParams,
   TaskLine,
 } from "./parser";
@@ -390,6 +392,23 @@ class NautilusBlock extends MarkdownRenderChild {
           ev.bgColor ?? TODO_PALETTE[todoHueIdx % TODO_PALETTE.length];
         todoHueIdx++;
       }
+      if (ev.meeting && !ev.done) {
+        // events join the desk too: same logging surface, plus a time label
+        const logs = readTaskLogs(lines, t);
+        this.deskTasks.push({
+          line: t.line,
+          text: t.text,
+          checked: t.checked,
+          indent: t.indent,
+          description: ev.description,
+          duration: ev.end - ev.start,
+          meeting: true,
+          timeLabel: `${minutesToTime(ev.start % 1440)}–${minutesToTime(
+            ev.end % 1440
+          )}`,
+          latestLog: logs[logs.length - 1],
+        });
+      }
       if (ev.meeting && ev.done) {
         dones.push(ev);
         continue;
@@ -566,6 +585,8 @@ class NautilusBlock extends MarkdownRenderChild {
         appendLog: (task, text) =>
           this.plugin.appendDeskLog(file, sectionStart, task, text),
         openTask: (task) => this.plugin.openDeskTask(file, sectionStart, task),
+        toggleDone: (task) =>
+          this.plugin.toggleDeskDone(file, sectionStart, task),
       }
     ).open();
   }
@@ -1114,6 +1135,32 @@ export default class NautilusLogPlugin extends Plugin {
       // a failed source write or retry it into a duplicate LOG entry.
       console.error("[Nautilus Log] Task note sync failed", error);
       new Notice(`Nautilus Log: log saved, but ${notePath} could not be synced.`);
+    }
+  }
+
+  /**
+   * Check off a desk item in place. The vault "modify" listener adds the
+   * `dHH:MM` stamp for tasks; done meetings render from the checkbox alone.
+   */
+  async toggleDeskDone(
+    file: TFile,
+    sectionStart: number,
+    expected: DeskTask
+  ): Promise<boolean> {
+    if (this.deskMutationPaths.has(file.path)) return false;
+    this.deskMutationPaths.add(file.path);
+    try {
+      const lines = (await this.app.vault.read(file)).split("\n");
+      const task = this.deskTaskInLines(lines, sectionStart, expected);
+      if (!task || task.checked === true) return false;
+      lines[task.line] = checkListItem(lines[task.line]);
+      await this.app.vault.modify(file, lines.join("\n"));
+      return true;
+    } catch (error) {
+      console.error("[Nautilus Log] Desk check-off failed", error);
+      return false;
+    } finally {
+      this.deskMutationPaths.delete(file.path);
     }
   }
 

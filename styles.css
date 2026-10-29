@@ -535,6 +535,10 @@
   background: var(--background-secondary);
 }
 
+.nautilus-desk-card.is-meeting {
+  border-left: 2px solid var(--interactive-accent);
+}
+
 .nautilus-desk-card-title {
   min-width: 0;
   font-size: 13px;
@@ -601,15 +605,49 @@
 .nautilus-desk-task {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   margin-bottom: 12px;
 }
 
 .nautilus-desk-task-title {
+  flex: 1;
+  min-width: 0;
   font-size: 17px;
   font-weight: 600;
   line-height: 1.4;
+}
+
+.nautilus-desk-task-title.is-done {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.nautilus-desk-done {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  padding: 4px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.nautilus-desk-done:hover {
+  border-color: var(--interactive-accent);
+  color: var(--interactive-accent);
+}
+
+.nautilus-desk-done.is-done {
+  border-color: var(--text-success);
+  color: var(--text-success);
+  cursor: default;
 }
 
 .nautilus-desk-task-duration {
@@ -677,6 +715,7 @@
 
 .nautilus-desk-card:focus-visible,
 .nautilus-desk-icon-btn:focus-visible,
+.nautilus-desk-done:focus-visible,
 .nautilus-desk-add:focus-visible,
 .nautilus-desk-open:focus-visible,
 .nautilus-desk-input:focus-visible {

@@ -4,6 +4,10 @@ import { childRange, formatClockStamp } from "./timing";
 export interface DeskTask extends TaskLine {
   description: string;
   duration: number;
+  /** true for time-range events (meetings) rather than plain tasks */
+  meeting?: boolean;
+  /** "09:00–10:00" for events; shown alongside the duration */
+  timeLabel?: string;
   latestLog?: TaskLogEntry;
 }
 

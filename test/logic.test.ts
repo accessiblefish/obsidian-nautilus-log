@@ -1,5 +1,5 @@
 import { DEFAULT_SETTINGS, NautEvent, workdayWindow } from "../src/types";
-import { parseRowParams, bumpProgressInLine, hasDoneTime, hasTrailingDoneTime, stripTrailingDoneTime, fixTaskLines, TaskLine } from "../src/parser";
+import { parseRowParams, bumpProgressInLine, checkListItem, hasDoneTime, hasTrailingDoneTime, stripTrailingDoneTime, fixTaskLines, TaskLine } from "../src/parser";
 import { addStartAfter, alignIntervalToWindow, fillDay } from "../src/scheduler";
 import {
   actualMinutesInWindow,
@@ -87,6 +87,13 @@ eq("start progress", bumpProgressInLine("- [ ] Task", 10, 600), "- [ ] Task d10%
 eq("inc progress", bumpProgressInLine("- [ ] Task d10%", 10, 600), "- [ ] Task d20%");
 eq("complete at 100", bumpProgressInLine("- [ ] Task d90%", 10, 600), "- [x] Task d10:00");
 eq("undo starts progress", bumpProgressInLine("- [x] Task d09:30", 10, 600), "- [ ] Task d10%");
+
+// ---- checkListItem ----
+eq("check unchecked box", checkListItem("- [ ] Task"), "- [x] Task");
+eq("check plain bullet", checkListItem("- 9-10 Standup"), "- [x] 9-10 Standup");
+eq("check plain bullet keeps indent", checkListItem("  - 9-10 Standup"), "  - [x] 9-10 Standup");
+eq("check ordered item", checkListItem("1. Task"), "1. [x] Task");
+eq("already checked stays", checkListItem("- [x] Task d09:30"), "- [x] Task d09:30");
 
 // ---- done-time stamp helpers ----
 eq("hasDoneTime mid-text", hasDoneTime("Task d13:20"), true);

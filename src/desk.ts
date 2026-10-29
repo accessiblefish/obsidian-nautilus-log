@@ -6,6 +6,8 @@ export interface DeskModalHandlers {
   loadLogs: (task: DeskTask) => Promise<TaskLogEntry[]>;
   appendLog: (task: DeskTask, text: string) => Promise<TaskLogEntry | null>;
   openTask: (task: DeskTask) => Promise<void>;
+  /** Check off the item in the note; false when the line no longer matches. */
+  toggleDone: (task: DeskTask) => Promise<boolean>;
 }
 
 /** Task cards below one Nautilus chart; click enters the logging modal. */
@@ -18,7 +20,7 @@ export function renderDeskCards(
   const root = container.createDiv({ cls: "nautilus-desk" });
   root.createDiv({
     cls: "nautilus-desk-heading",
-    text: `nautilus task (${tasks.length})`,
+    text: `nautilus plan (${tasks.length})`,
   });
   const grid = root.createDiv({ cls: "nautilus-desk-grid" });
   tasks.forEach((task, index) => {
@@ -29,10 +31,11 @@ export function renderDeskCards(
         "aria-label": `Open log for ${task.description}`,
       },
     });
+    card.toggleClass("is-meeting", task.meeting === true);
     card.createSpan({ cls: "nautilus-desk-card-title", text: task.description });
     card.createSpan({
       cls: "nautilus-desk-card-duration",
-      text: formatCapacityDuration(task.duration),
+      text: task.timeLabel ?? formatCapacityDuration(task.duration),
     });
     if (task.latestLog) {
       const time = /(\d{2}:\d{2})$/.exec(task.latestLog.stamp)?.[1];
@@ -53,6 +56,8 @@ export class DeskModal extends Modal {
   private addButton: HTMLButtonElement | null = null;
   private previousButton: HTMLButtonElement | null = null;
   private nextButton: HTMLButtonElement | null = null;
+  private doneButton: HTMLButtonElement | null = null;
+  private taskTitleEl: HTMLElement | null = null;
   private logsEl: HTMLElement | null = null;
   private busy = false;
   private renderSeq = 0;
@@ -120,10 +125,25 @@ export class DeskModal extends Modal {
       text: this.sourceTitle,
     });
     const heading = this.contentEl.createDiv({ cls: "nautilus-desk-task" });
-    heading.createSpan({ cls: "nautilus-desk-task-title", text: task.description });
+    this.doneButton = heading.createEl("button", {
+      cls: "nautilus-desk-done",
+      attr: {
+        type: "button",
+        title: "Mark done",
+        "aria-label": `Mark ${task.description} done`,
+      },
+    });
+    setIcon(this.doneButton, "check");
+    this.doneButton.addEventListener("click", () => void this.toggleCurrentDone());
+    this.taskTitleEl = heading.createSpan({
+      cls: "nautilus-desk-task-title",
+      text: task.description,
+    });
     heading.createSpan({
       cls: "nautilus-desk-task-duration",
-      text: formatCapacityDuration(task.duration),
+      text: task.timeLabel
+        ? `${task.timeLabel} · ${formatCapacityDuration(task.duration)}`
+        : formatCapacityDuration(task.duration),
     });
 
     this.logsEl = this.contentEl.createDiv({ cls: "nautilus-desk-logs" });
@@ -199,6 +219,44 @@ export class DeskModal extends Modal {
     }
     if (this.addButton) this.addButton.disabled = this.busy;
     if (this.input) this.input.disabled = this.busy;
+    this.syncDoneState();
+  }
+
+  /** Strike-through plus a settled check button once the item is done. */
+  private syncDoneState(): void {
+    const done = this.currentTask().checked === true;
+    this.taskTitleEl?.toggleClass("is-done", done);
+    if (this.doneButton) {
+      this.doneButton.disabled = this.busy || done;
+      this.doneButton.toggleClass("is-done", done);
+      const label = done ? "Done" : "Mark done";
+      this.doneButton.setAttr("title", label);
+      this.doneButton.setAttr(
+        "aria-label",
+        done ? `${this.currentTask().description} is done` : `Mark ${this.currentTask().description} done`
+      );
+    }
+  }
+
+  private async toggleCurrentDone(): Promise<void> {
+    if (this.busy || this.currentTask().checked === true) return;
+    const task = this.currentTask();
+    this.busy = true;
+    this.updateButtons();
+    try {
+      if (await this.handlers.toggleDone(task)) {
+        // session copy only; the note itself was already rewritten
+        task.checked = true;
+      } else {
+        new Notice("Nautilus log: the item changed, so it was not checked off.");
+      }
+    } catch (error) {
+      console.error("[Nautilus Log] Desk check-off failed", error);
+      new Notice("Nautilus log: the item could not be checked off.");
+    } finally {
+      this.busy = false;
+      this.updateButtons();
+    }
   }
 
   /** Returns false when the task changed or persistence failed. */
